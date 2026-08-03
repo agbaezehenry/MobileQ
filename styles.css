@@ -417,6 +417,11 @@ body::before {
 .verdict__why  { margin: 0; font-size: 0.95rem; color: var(--chalk-soft); }
 .verdict .btn  { align-self: flex-start; margin-top: 4px; }
 
+.verdict__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.verdict__actions .btn { align-self: auto; margin-top: 0; }
+.btn--ask { border-color: rgba(233, 195, 126, 0.42); color: var(--tint-b); }
+.btn--ask:hover { border-color: var(--tint-b); }
+
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise    { from { transform: translate3d(0,100%,0); } to { transform: translate3d(0,0,0); } }
 
@@ -450,6 +455,194 @@ body::before {
 .review-item__why { margin: 0; font-size: 0.9rem; color: var(--chalk-soft); }
 .review-empty { color: var(--chalk-soft); }
 
+/* ---- ask panel ----------------------------------------------------------
+   A near-full-height sheet over the verdict. --kb is set from JS off
+   visualViewport, so the composer rides above the iOS keyboard instead of
+   being covered by it. ---------------------------------------------------- */
+.ask {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(10,14,15,0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: fade-in 0.16s ease both;
+}
+.ask__sheet {
+  width: 100%;
+  height: calc(100% - var(--safe-t) - 14px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;                       /* lets .ask__log actually shrink+scroll */
+  background: var(--board-deep);
+  border-top: 1.5px solid var(--chalk-hair);
+  border-radius: 24px 22px 0 0;
+  padding-bottom: var(--kb, 0px);      /* keyboard inset — lifts the composer */
+  overflow: hidden;
+  animation: rise 0.26s var(--ease-spring) both;
+}
+
+.ask__bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px calc(var(--safe-r) + 20px) 13px calc(var(--safe-l) + 20px);
+  border-bottom: 1px solid var(--chalk-hair);
+}
+.ask__titles { flex: 1; min-width: 0; }
+.ask__eyebrow {
+  margin: 0;
+  font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--chalk-faint);
+}
+.ask__title {
+  margin: 5px 0 0;
+  font-size: 0.95rem; line-height: 1.32;
+  color: var(--chalk-soft);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ask__close {
+  appearance: none; font: inherit; cursor: pointer;
+  flex: 0 0 40px; width: 40px; height: 40px;
+  display: grid; place-items: center;
+  background: transparent;
+  color: var(--chalk-soft);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 50% 46% 52% 48%;
+  transition: transform 0.12s ease, border-color 0.2s ease;
+}
+.ask__close:active { transform: scale(0.94); }
+
+.ask__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 18px calc(var(--safe-r) + 20px) 10px calc(var(--safe-l) + 20px);
+  display: flex; flex-direction: column; gap: 15px;
+}
+
+.ask__msg {
+  white-space: pre-wrap;          /* model replies are plain text with newlines */
+  overflow-wrap: break-word;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+.ask__msg--user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 10px 14px;
+  color: var(--chalk);
+  background: rgba(243,240,230,0.10);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 15px 13px 5px 16px;
+}
+.ask__msg--bot {
+  align-self: flex-start;
+  padding-left: 14px;
+  color: var(--chalk-soft);
+  border-left: 1.5px solid rgba(233,195,126,0.5);
+}
+.ask__msg--note {
+  align-self: center;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--wrong);
+}
+
+.ask__hint { margin: 0; font-size: 0.9rem; color: var(--chalk-faint); }
+.ask__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask__chip {
+  appearance: none; font: inherit; cursor: pointer;
+  font-size: 0.85rem;
+  padding: 8px 13px;
+  text-align: left;
+  color: var(--chalk-soft);
+  background: rgba(243,240,230,0.045);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 13px 11px 14px 12px;
+  transition: transform 0.12s ease, background 0.18s ease;
+}
+.ask__chip:active { transform: scale(0.96); background: rgba(243,240,230,0.11); }
+
+/* Waiting-for-first-token indicator. */
+.ask__dots { display: inline-flex; gap: 5px; align-items: center; height: 1.45em; }
+.ask__dots i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--chalk-faint);
+  animation: dot 1.1s infinite ease-in-out;
+}
+.ask__dots i:nth-child(2) { animation-delay: 0.16s; }
+.ask__dots i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30%           { opacity: 0.9;  transform: translateY(-3px); }
+}
+
+/* ---- composer + key entry ----------------------------------------------- */
+.ask__form {
+  display: flex; gap: 10px; align-items: flex-end;
+  padding: 12px calc(var(--safe-r) + 20px) 12px calc(var(--safe-l) + 20px);
+  border-top: 1px solid var(--chalk-hair);
+}
+.ask__input {
+  flex: 1;
+  appearance: none;
+  font: inherit;
+  font-size: 1rem;               /* >=16px, or iOS zooms the page on focus */
+  resize: none;
+  max-height: 124px;
+  color: var(--chalk);
+  background: rgba(243,240,230,0.05);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 15px 13px 16px 14px;
+  padding: 12px 14px;
+  line-height: 1.4;
+}
+.ask__input::placeholder { color: var(--chalk-faint); }
+.ask__send {
+  flex: 0 0 48px; width: 48px; height: 48px;
+  appearance: none; cursor: pointer;
+  font: inherit; font-size: 1.25rem;
+  color: var(--board-deep);
+  background: var(--chalk-soft);
+  border: none;
+  border-radius: 50% 46% 52% 48%;
+  transition: transform 0.12s ease, opacity 0.18s ease;
+}
+.ask__send:active { transform: scale(0.94); }
+.ask__send[disabled] { opacity: 0.3; cursor: default; }
+
+.ask__key {
+  display: grid; gap: 12px;
+  padding: 16px calc(var(--safe-r) + 20px) 14px calc(var(--safe-l) + 20px);
+  border-top: 1px solid var(--chalk-hair);
+}
+.ask__keyline  { margin: 0; font-size: 0.9rem; color: var(--chalk-soft); }
+.ask__keynote  { margin: 0; font-size: 0.78rem; color: var(--chalk-faint); }
+.ask__keyinput { width: 100%; }
+.ask__key .btn { justify-self: start; }
+
+.ask__foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  margin: 0;
+  padding: 0 calc(var(--safe-r) + 20px) calc(var(--safe-b) + 10px) calc(var(--safe-l) + 20px);
+  font-size: 0.72rem;
+  color: var(--chalk-faint);
+}
+.ask__link {
+  appearance: none; background: none; border: none; padding: 0;
+  font: inherit; font-size: 0.72rem;
+  color: var(--chalk-faint);
+  text-decoration: underline;
+  cursor: pointer;
+  flex: none;
+}
+
 /* ---- accessibility ------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -463,4 +656,11 @@ body::before {
   .stage  { max-width: 520px; margin-left: auto; margin-right: auto; }
   .controls { max-width: 556px; margin: 0 auto; }
   .verdict__card { max-width: 640px; margin: 0 auto; border-radius: 24px 22px 0 0; }
+  .ask__sheet {
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+    height: calc(100% - var(--safe-t) - 48px);
+    border-radius: 24px 22px 0 0;
+  }
 }

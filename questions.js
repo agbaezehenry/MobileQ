@@ -17,11 +17,14 @@
      explanation: "Why that's the answer. Shown after you commit."
    }
 
-   Deck theme: metrics. Four families —
+   Deck theme: metrics, plus the systems they get measured on. Four metric families —
      BUSINESS  what the company cares about (money, users, retention)
      OFFLINE   what you measure on held-out data before shipping
      ONLINE    what you measure on live traffic and in experiments
      TRAINING  what you watch on the loss curve while the model is learning
+   — with TAXONOMY on telling those apart, MONITORING on drift, and SYSTEMS on the
+   machinery around the model: feature stores, pipelines, deployment, failure modes,
+   retrieval architecture, position bias, and cold start.
    ============================================================================= */
 
 const QUESTIONS = [
@@ -1200,6 +1203,434 @@ const QUESTIONS = [
     optionB: "True",
     correct: "B",
     explanation: "Cross-entropy weights every example equally; your business doesn't. A model that gets slightly worse on the bulk of easy cases while improving on high-value ones can lose on loss and win on revenue."
+  },
+
+  /* ---------------------------------------------------------------------------
+     METRIC LAYERS — which of the four is actually moving
+     ------------------------------------------------------------------------ */
+  {
+    id: "tax-011",
+    topic: "taxonomy",
+    type: "two-choice",
+    question: "A bank picks between two fraud models using Precision@5,000 on last quarter's labelled transactions. That number is a…",
+    optionA: "Offline metric",
+    optionB: "Online metric",
+    correct: "A",
+    explanation: "Held-out historical data, no live traffic, rerunnable on every commit. Note the 5,000 comes from analyst capacity — the offline metric is shaped by a production constraint even though it never touches production."
+  },
+  {
+    id: "tax-012",
+    topic: "taxonomy",
+    type: "two-choice",
+    question: "After launch the same bank tracks manual-review yield: the share of reviewed alerts that turn out to be real fraud. Which family?",
+    optionA: "Offline metric",
+    optionB: "Online metric",
+    correct: "B",
+    explanation: "Live traffic, real analysts, labels arriving late. It is the production echo of Precision@K — and when the two disagree, the held-out set is usually the stale one."
+  },
+  {
+    id: "tax-013",
+    topic: "taxonomy",
+    type: "two-choice",
+    question: "A search team trains with pairwise ranking loss and ships whichever model wins on NDCG@10. Which of the two is the training objective?",
+    optionA: "The pairwise ranking loss",
+    optionB: "NDCG@10",
+    correct: "A",
+    explanation: "NDCG contains a sort, so it has no useful gradient. You optimise a differentiable surrogate and let NDCG pick the winner. Training loss and offline metric being different functions is the normal case, not a smell."
+  },
+  {
+    id: "tax-014",
+    topic: "taxonomy",
+    type: "true-false",
+    question: "The cross-entropy minimised by gradient descent and the log loss on your validation set are the same formula.",
+    optionA: "False",
+    optionB: "True",
+    correct: "B",
+    explanation: "Same quantity, two jobs. The training loss has to be differentiable; the offline metric only has to answer 'which model is better?'. Two names for one function is habit, not mathematics."
+  },
+  {
+    id: "tax-015",
+    topic: "taxonomy",
+    type: "true-false",
+    question: "Log loss is inherently an offline metric.",
+    optionA: "False",
+    optionB: "True",
+    correct: "A",
+    explanation: "Where you measure it decides. On a frozen validation split it is offline; computed weekly against outcomes that actually landed it is online. No formula knows which side of deployment it is sitting on."
+  },
+
+  /* ---------------------------------------------------------------------------
+     ARITHMETIC — the confusion matrix, done by hand
+     ------------------------------------------------------------------------ */
+  {
+    id: "off-043",
+    topic: "offline · classification",
+    type: "two-choice",
+    question: "A fraud system sees 100,000 legitimate transactions and wrongly flags 300. The false-positive rate is…",
+    optionA: "3%",
+    optionB: "0.3%",
+    correct: "B",
+    explanation: "300 / 100,000. The denominator is the legitimate population, not the alert pile — that is what separates FPR from 1 minus precision, and why a 0.3% FPR can still leave most of your alerts junk."
+  },
+  {
+    id: "off-044",
+    topic: "offline · classification",
+    type: "two-choice",
+    question: "500 patients have the disease and the model finds 450. Recall and false-negative rate are…",
+    optionA: "90% and 10%",
+    optionB: "90% and 90%",
+    correct: "A",
+    explanation: "FNR is exactly 1 minus recall — the same fact from the other end. Try saying 'we miss one in ten sick patients' in the review instead of '90% recall' and watch the room react differently."
+  },
+  {
+    id: "off-045",
+    topic: "offline · classification",
+    type: "two-choice",
+    question: "Analysts review 2,000 flagged transactions and confirm 360 as fraud. Precision is…",
+    optionA: "82%",
+    optionB: "18%",
+    correct: "B",
+    explanation: "360 / 2,000. Four in five reviews are wasted, which sounds fatal until you price it: at $8 a review and $4,000 a catch, that queue prints money."
+  },
+  {
+    id: "off-046",
+    topic: "offline · classification",
+    type: "two-choice",
+    question: "Precision is 0.80 and recall is 0.50. F1 is closest to…",
+    optionA: "0.62",
+    optionB: "0.65",
+    correct: "A",
+    explanation: "2(0.8)(0.5) / 1.3 is about 0.615. The 0.65 is the arithmetic mean — the trap. F1 is harmonic, so it gets dragged toward the weaker number and strong precision cannot buy its way out."
+  },
+  {
+    id: "off-047",
+    topic: "offline · classification",
+    type: "two-choice",
+    question: "A missed fraud costs about $4,000; a false alert costs about $8. Reporting F1 as the headline metric…",
+    optionA: "buries a 500:1 cost asymmetry",
+    optionB: "balances the two errors correctly",
+    correct: "A",
+    explanation: "Weighting precision and recall equally is a claim about costs, and here it is off by a factor of five hundred. Score on expected dollars instead: cost of a miss times misses, plus cost of an alert times false alerts."
+  },
+  {
+    id: "off-042",
+    topic: "offline · regression",
+    type: "two-choice",
+    question: "You are predicting hotel prices in dollars and a teammate proposes cross-entropy as the loss. The objection is…",
+    optionA: "It scores probabilities, not magnitudes",
+    optionB: "It converges too slowly on skewed targets",
+    correct: "A",
+    explanation: "Cross-entropy asks how much probability mass you put on the true class, and a price has no classes. Reach for MSE, MAE, Huber, or quantile loss depending on whether outliers and asymmetry matter."
+  },
+  {
+    id: "off-048",
+    topic: "offline · regression",
+    type: "true-false",
+    question: "The quantile loss a forecaster trains on and the pinball loss it is scored with are the same function.",
+    optionA: "False",
+    optionB: "True",
+    correct: "B",
+    explanation: "Same function, two names — the training and evaluation split again. The real decision is which quantile: the 90th for staffing and inventory, where running out costs more than overshooting."
+  },
+
+  /* ---------------------------------------------------------------------------
+     SYSTEMS — feature stores and pipelines
+     ------------------------------------------------------------------------ */
+  {
+    id: "sys-001",
+    topic: "systems · feature stores",
+    type: "two-choice",
+    question: "The architectural split between an online and an offline feature store is really about…",
+    optionA: "Streaming versus batch processing",
+    optionB: "Millisecond single-entity reads versus high-throughput scans",
+    correct: "B",
+    explanation: "Redis-style online stores answer 'features for this one user, now' in single-digit milliseconds. Warehouse-style offline stores scan billions of rows to build a training set. Either can be fed by batch or stream — the access pattern is what differs."
+  },
+  {
+    id: "sys-006",
+    topic: "systems · feature stores",
+    type: "two-choice",
+    question: "Point-in-time correctness in an offline feature store exists to…",
+    optionA: "Stop training features containing post-event information",
+    optionB: "Speed up queries by partitioning on date",
+    correct: "A",
+    explanation: "Join naively and 'total clicks' for a Tuesday event quietly includes Wednesday's clicks. The model looks brilliant offline and collapses in production, because at serving time the future is not available."
+  },
+  {
+    id: "sys-022",
+    topic: "systems · feature stores",
+    type: "two-choice",
+    question: "A central feature registry prevents training–serving skew by…",
+    optionA: "Storing model weights alongside the features",
+    optionB: "Defining each feature once and compiling it for both paths",
+    correct: "B",
+    explanation: "The skew comes from a human rewriting a pandas transformation in Java and getting a null default or a rounding rule slightly wrong. One declarative definition, two generated implementations, no translation step left to get wrong."
+  },
+  {
+    id: "sys-011",
+    topic: "systems · pipelines",
+    type: "two-choice",
+    question: "'Clicks in the last five minutes' as a serving feature is typically produced by…",
+    optionA: "A nightly warehouse batch job",
+    optionB: "A stream engine reading a broker, writing to the online store",
+    correct: "B",
+    explanation: "Kafka carries the events, Flink holds the rolling window, the result lands in Redis before the next request needs it. A nightly job cannot express 'last five minutes' at all."
+  },
+  {
+    id: "sys-015",
+    topic: "systems · pipelines",
+    type: "two-choice",
+    question: "An on-demand feature is one that…",
+    optionA: "Gets refreshed hourly by a stream job",
+    optionB: "Must be computed at request time from data unique to that request",
+    correct: "B",
+    explanation: "Distance between the user's live GPS ping and the restaurant cannot exist before the request arrives. These are also the features most prone to training–serving skew, since the offline version has to reconstruct what the request would have carried."
+  },
+
+  /* ---------------------------------------------------------------------------
+     SYSTEMS — deployment and failure modes
+     ------------------------------------------------------------------------ */
+  {
+    id: "sys-003",
+    topic: "systems · deployment",
+    type: "two-choice",
+    question: "In a shadow deployment, what happens to the new model's prediction?",
+    optionA: "It is shown to a small slice of live users",
+    optionB: "It is logged for analysis and never shown to anyone",
+    correct: "B",
+    explanation: "Requests are mirrored to V2 while V1 still answers. You get production traffic, production features and real latency numbers at zero blast radius. What you cannot get is user response — nobody ever saw V2's output."
+  },
+  {
+    id: "sys-020",
+    topic: "systems · deployment",
+    type: "two-choice",
+    question: "A canary release typically starts by routing what share of traffic to the new model?",
+    optionA: "1–5%",
+    optionB: "About 50%",
+    correct: "A",
+    explanation: "Small enough that a catastrophic bug is a rounding error, large enough to surface one. You ramp on the way up. Fifty-fifty is an A/B test — a different tool answering a different question."
+  },
+  {
+    id: "sys-010",
+    topic: "systems · deployment",
+    type: "two-choice",
+    question: "The distinctive risk of A/B testing a model, versus shadow or canary, is…",
+    optionA: "A bad model hits real business metrics for a large cohort",
+    optionB: "It cannot measure revenue",
+    correct: "A",
+    explanation: "That exposure is the whole point — it is the only way to read causal business impact. But a 50/50 split means half your users live with V2's mistakes for the length of the test, which is why you canary first and A/B second."
+  },
+  {
+    id: "sys-008",
+    topic: "systems · deployment",
+    type: "two-choice",
+    question: "You are canarying a loan-default model whose real label takes six months. You evaluate it using…",
+    optionA: "Short-term proxy labels, like a missed first payment",
+    optionB: "Data drift metrics alone",
+    correct: "A",
+    explanation: "A correlated early signal catches a catastrophically broken model in days. It is a proxy and it will drift from the real thing — you still reconcile against true defaults later, you just do not block the release on them."
+  },
+  {
+    id: "sys-002",
+    topic: "systems · failures",
+    type: "two-choice",
+    question: "Your inference server slows down and callers start piling up on it. The pattern that stops the cascade is…",
+    optionA: "A circuit breaker with a fallback",
+    optionB: "Gradient accumulation",
+    correct: "A",
+    explanation: "Once latency or error rate crosses a threshold the breaker trips and traffic goes straight to something cheap and safe — cached popular items, a heuristic, last known good. Serving something mediocre instantly beats hanging every upstream service."
+  },
+  {
+    id: "sys-013",
+    topic: "systems · failures",
+    type: "two-choice",
+    question: "Your recommender runs out of memory during live inference. The usual culprit is…",
+    optionA: "The training batch size is set too high",
+    optionB: "Unbounded feature history pulled in for a single request",
+    correct: "B",
+    explanation: "One bot or power user with a million logged events, no truncation rule in the feature fetch, and the container dies. Cap history length at retrieval time — the model almost never needs more than the recent window."
+  },
+  {
+    id: "sys-017",
+    topic: "systems · failures",
+    type: "two-choice",
+    question: "Monitoring and feature logging are kept off the synchronous inference path so that…",
+    optionA: "Drift detection becomes more accurate",
+    optionB: "Logging problems cannot add latency or fail the prediction",
+    correct: "B",
+    explanation: "Write to a broker and let the monitoring pipeline consume at its own pace. Otherwise a slow analytics sink becomes a user-facing outage — the observability system taking down the thing it observes."
+  },
+  {
+    id: "sys-023",
+    topic: "systems · failures",
+    type: "two-choice",
+    question: "Gradient accumulation is the fix for…",
+    optionA: "Latency spikes at serving time",
+    optionB: "Training OOM when the batch you want exceeds VRAM",
+    correct: "B",
+    explanation: "Run four micro-batches of 32, sum the gradients, step once — near-equivalent to a batch of 128 without ever holding it in memory. It buys memory with wall-clock time, and does nothing whatsoever for inference."
+  },
+
+  /* ---------------------------------------------------------------------------
+     SYSTEMS — architecture and retrieval
+     ------------------------------------------------------------------------ */
+  {
+    id: "sys-007",
+    topic: "systems · architecture",
+    type: "two-choice",
+    question: "A brand-new item with zero interactions arrives in a two-tower retrieval system. What happens?",
+    optionA: "It waits for the overnight retrain",
+    optionB: "The item tower embeds its metadata and it is immediately scorable",
+    correct: "B",
+    explanation: "That is the main reason to pay the two-tower tax. If the item tower consumes title, description and image rather than an ID lookup, a cold item lands in the same vector space as everything else the moment it exists."
+  },
+  {
+    id: "sys-016",
+    topic: "systems · architecture",
+    type: "two-choice",
+    question: "Pulling 1,000 candidates from a 10-million-item catalogue in under 100 ms calls for…",
+    optionA: "Scoring every item with a light model",
+    optionB: "Approximate nearest-neighbour search over embeddings",
+    correct: "B",
+    explanation: "Ten million scores per request is not happening at any model size. ANN indexes trade exactness for sub-linear lookup — you accept missing a few true neighbours to get the shortlist the expensive ranker then re-scores."
+  },
+  {
+    id: "sys-009",
+    topic: "systems · architecture",
+    type: "two-choice",
+    question: "Ad CTR prediction under a 50 ms budget. Which stack?",
+    optionA: "An LLM doing zero-shot classification",
+    optionB: "A factorisation-machine hybrid with features from an in-memory store",
+    correct: "B",
+    explanation: "DeepFM-style models are built for exactly this: sparse categorical crosses at tiny inference cost. The latency usually is not the model anyway — it is the feature fetch, which is why those features live in Redis."
+  },
+  {
+    id: "sys-024",
+    topic: "systems · architecture",
+    type: "two-choice",
+    question: "In a RAG pipeline, the cross-encoder re-ranker exists to…",
+    optionA: "Precisely re-order the top few dozen retrieved chunks",
+    optionB: "Fetch the initial thousands of candidates",
+    correct: "A",
+    explanation: "Bi-encoders embed query and document separately, which is what makes them indexable and approximate. A cross-encoder reads both together — far more accurate, far too slow for the whole corpus, exactly right for a shortlist."
+  },
+
+  /* ---------------------------------------------------------------------------
+     SYSTEMS — feedback loops, bias, and cold start
+     ------------------------------------------------------------------------ */
+  {
+    id: "sys-004",
+    topic: "systems · bias",
+    type: "two-choice",
+    question: "Inverse propensity weighting corrects position bias by…",
+    optionA: "Dividing a clicked item's loss by the chance it was examined",
+    optionB: "Dropping all rank-1 clicks from training",
+    correct: "A",
+    explanation: "A click at rank 9 is rare because fewer people look that far, not because the item is worse. Dividing by the examination probability scales those clicks back up to what they would have been had everyone seen them."
+  },
+  {
+    id: "sys-025",
+    topic: "systems · bias",
+    type: "two-choice",
+    question: "IPW destabilises training when propensities get tiny. The standard fix is…",
+    optionA: "Add more RAM",
+    optionB: "Clip propensities at a floor",
+    correct: "B",
+    explanation: "A propensity of 0.001 turns one click into a 1000x weight, and takes the gradient step with it. Clipping caps the multiplier — you trade a little residual bias for a model that actually converges."
+  },
+  {
+    id: "sys-012",
+    topic: "systems · bias",
+    type: "two-choice",
+    question: "Randomising the order of identical items is the gold standard for measuring position bias because…",
+    optionA: "It isolates position from relevance",
+    optionB: "It requires no engineering work",
+    correct: "A",
+    explanation: "If two items are interchangeable and swapping their slots changes CTR, the difference is position and nothing else. It costs you some ranking quality on the randomised traffic — that is the price of an unbiased estimate."
+  },
+  {
+    id: "sys-018",
+    topic: "systems · bias",
+    type: "two-choice",
+    question: "Expectation-maximisation estimates position bias from historical logs by…",
+    optionA: "Shuffling live results for real users",
+    optionB: "Iteratively separating probability of examination from relevance",
+    correct: "B",
+    explanation: "You observe clicks; you never observe whether the user looked. EM alternates between guessing examination probabilities and re-estimating relevance until it settles. Cheaper than randomisation because it touches no live traffic — and it leans harder on its own assumptions."
+  },
+  {
+    id: "sys-014",
+    topic: "systems · bias",
+    type: "two-choice",
+    question: "The long-run damage from a feed that only exploits known preferences is…",
+    optionA: "New content starves and users eventually get bored",
+    optionB: "Inference latency climbs",
+    correct: "A",
+    explanation: "Pure exploitation looks excellent on next-session engagement while hollowing out the catalogue underneath it. Nothing new gets impressions, so nothing new gets data, so the model never learns that it was any good."
+  },
+  {
+    id: "sys-005",
+    topic: "systems · cold start",
+    type: "two-choice",
+    question: "You need CTR data for items nobody has ever seen. The deliberate strategy is…",
+    optionA: "Matrix factorisation over the existing interaction matrix",
+    optionB: "Bandit exploration — spend a slice of traffic on unknowns",
+    correct: "B",
+    explanation: "Factorisation can only interpolate from interactions that exist, and a brand-new item has none. Epsilon-greedy or UCB pays a small, bounded engagement cost now to buy the data that makes the item rankable later."
+  },
+  {
+    id: "sys-019",
+    topic: "systems · cold start",
+    type: "two-choice",
+    question: "Asking a new user to pick five artists at signup solves user cold start by…",
+    optionA: "Falling back to device metadata",
+    optionB: "Buying an explicit preference vector before the first feed",
+    correct: "B",
+    explanation: "It converts an unanswerable question into a short form. The cost is friction at the highest-drop-off moment in the funnel, which is why it is usually five taps and skippable."
+  },
+
+  /* ---------------------------------------------------------------------------
+     MORE METRIC CHOICES — picking the right one for the job
+     ------------------------------------------------------------------------ */
+  {
+    id: "off-217",
+    topic: "offline · ranking",
+    type: "two-choice",
+    question: "You need one offline metric for a search system where the order of the top results is the whole game. Reach for…",
+    optionA: "ROC-AUC",
+    optionB: "NDCG",
+    correct: "B",
+    explanation: "AUC scores whether relevant beats irrelevant anywhere in the list. NDCG discounts by position, so the same good result counts for far less at rank 8 than at rank 1. Accuracy and MSE are not in the conversation — nothing here is a class or a magnitude."
+  },
+  {
+    id: "off-218",
+    topic: "offline · ranking",
+    type: "two-choice",
+    question: "'People you may know' graph recommendations often weight recall heavily because…",
+    optionA: "A missed real-world friend costs network growth",
+    optionB: "Precision cannot be computed on graphs",
+    correct: "A",
+    explanation: "An irrelevant suggestion is a shrug; a connection never surfaced may never happen at all. Social products compound on graph density, so false negatives get charged against long-term growth, not just this session."
+  },
+  {
+    id: "onl-107",
+    topic: "online · product",
+    type: "two-choice",
+    question: "Your business metric is ad revenue on a video feed. Which model-facing metric tracks it best?",
+    optionA: "CTR alone",
+    optionB: "Total watch time",
+    correct: "B",
+    explanation: "CTR only buys the start of a session; mid-roll inventory scales with minutes watched. Optimising clicks alone reliably produces thumbnail bait — high CTR, short sessions, less revenue than you started with."
+  },
+  {
+    id: "mon-009",
+    topic: "monitoring · drift",
+    type: "two-choice",
+    question: "Which kind of drift can you only confirm once ground-truth labels arrive?",
+    optionA: "Covariate shift",
+    optionB: "Concept drift",
+    correct: "B",
+    explanation: "Input and prediction distributions are observable the moment traffic lands. Concept drift is a change in P(y|x) — the relationship itself — and you cannot see that the mapping moved until you learn what actually happened."
   }
 
 ];

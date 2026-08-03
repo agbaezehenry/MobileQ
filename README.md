@@ -4,7 +4,8 @@ A swipe-based quiz PWA. One question per card, filling the screen: swipe **left*
 left-hand answer, **right** for the right-hand answer, **up** to skip. Vanilla HTML, CSS
 and JS — no framework, no build step, no npm. Push the files, enable Pages, done.
 
-The deck that ships with it is a 114-card drill on **metrics**, split into four families:
+The deck that ships with it is a 154-card drill on **metrics and ML systems**. The metrics
+half splits into four families:
 
 | Family | What it measures | Examples in the deck |
 | --- | --- | --- |
@@ -16,6 +17,18 @@ The deck that ships with it is a 114-card drill on **metrics**, split into four 
 Plus a `taxonomy` group on telling the four families apart, and a `monitoring` group on
 drift (PSI, concept vs covariate shift, training–serving skew, feedback loops).
 
+The `systems` family covers the machinery around the model rather than the model itself:
+
+| Group | What it drills |
+| --- | --- |
+| `systems · feature stores` | online vs offline stores, point-in-time correctness, the feature registry |
+| `systems · pipelines` | streaming features via broker → stream engine → online store, on-demand features |
+| `systems · deployment` | shadow, canary, A/B blast radius, proxy labels for delayed ground truth |
+| `systems · failures` | circuit breakers, inference OOM, decoupled monitoring, gradient accumulation |
+| `systems · architecture` | two-tower retrieval, ANN search, DeepFM under a latency budget, RAG cross-encoders |
+| `systems · bias` | position bias, IPW and propensity clipping, FairPairs, EM, filter bubbles |
+| `systems · cold start` | bandit exploration for items, explicit onboarding for users |
+
 ---
 
 ## Files
@@ -23,7 +36,7 @@ drift (PSI, concept vs covariate shift, training–serving skew, feedback loops)
 ```
 index.html      app shell + iOS meta tags
 styles.css      chalkboard styling
-app.js          swipe gesture, scoring, summary
+app.js          swipe gesture, scoring, summary, Ask chat
 questions.js    the question bank — edit this, nothing else
 manifest.json   PWA manifest
 sw.js           service worker (offline cache)
@@ -104,6 +117,45 @@ right is true, which matches the ✗/✓ muscle memory.
 Two things worth keeping up as you add cards: vary which side is correct (the current deck
 is 52 A / 62 B, so you can't swipe one direction and coast), and keep option labels short
 enough to read on the card edge and in the tap buttons.
+
+---
+
+## Asking about a card
+
+After you commit an answer, the verdict sheet has an **Ask** button next to *Next card*.
+It opens a chat with Claude about the card you just did. The question, both options, which
+one you picked, the right answer and the explanation are already loaded as the system
+prompt — so the first thing you say can be "why?" rather than a restatement of the card.
+The thread resets with each new card.
+
+### It needs your own API key
+
+This is a static site with no backend, so there is nowhere to hide a server-side secret.
+The first time you tap Ask it asks for an Anthropic API key, which is:
+
+- stored in that browser's `localStorage` under `metric-board.anthropic-key`
+- sent to `api.anthropic.com` and nowhere else
+- **never committed** — it lives on the device, not in this repo
+
+Get one at [console.anthropic.com](https://console.anthropic.com) → API keys. Usage bills to
+that account. There's a **Forget key** link at the bottom of the panel.
+
+The tradeoff to be aware of: a key in `localStorage` is readable by anything running on this
+origin and by anyone holding the unlocked phone. That's an acceptable deal for a personal
+drill on your own device. It is *not* the right model if you hand this URL to other people —
+for that, put a proxy (a Cloudflare Worker holding the key as a secret) in front of the API
+and point `ASK_URL` in `app.js` at it instead.
+
+### The call
+
+`claude-opus-5`, streamed, at `effort: "low"` — these are short tutoring answers, not deep
+reasoning, and low effort keeps them fast and cheap on a phone. Thinking is left on (it's the
+default on Opus 5); the SSE reader only renders `text_delta`, so reasoning never reaches the
+bubble. Browser calls are opted into CORS with the `anthropic-dangerous-direct-browser-access`
+header. All of it lives under the `ASK —` banner in `app.js`, behind one `askStream()`
+function — swap that one function to move to a proxy.
+
+Offline, the deck still works; Ask just reports that it can't reach the API.
 
 ---
 

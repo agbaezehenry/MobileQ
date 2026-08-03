@@ -296,16 +296,421 @@
     $('verdict-line').textContent = line;
     $('verdict-why').textContent  = q.explanation;
 
+    // Hand this card to the Ask panel and start it on a clean thread.
+    askCtx     = { q: q, v: v, choice: choice };
+    askHistory = [];
+    askResetLog();
+
     verdict.classList.remove('is-hidden');
     $('btn-next').focus({ preventScroll: true });
   }
 
   function nextCard() {
+    if (!ask.classList.contains('is-hidden')) return;   // chatting — stay put
     if (verdict.classList.contains('is-hidden')) return;
     verdict.classList.add('is-hidden');
     locked = false;
     index += 1;
     renderStack();
+  }
+
+  /* =========================================================================
+     ASK — chat about the card you just answered.
+
+     The card is preloaded as the system prompt (question, both options, what
+     you picked, the right answer, the explanation), so the first message can
+     be "why?" instead of a restatement of the question.
+
+     There is no backend here — this is a static site — so the request goes
+     straight from the browser to api.anthropic.com using a key you paste in
+     once. That key is kept in this browser's localStorage and is sent to
+     nobody but Anthropic. Don't use this build on a shared device.
+     ========================================================================= */
+
+  var ASK_URL     = 'https://api.anthropic.com/v1/messages';
+  var ASK_MODEL   = 'claude-opus-5';
+  var ASK_VERSION = '2023-06-01';
+  var ASK_KEY_LS  = 'metric-board.anthropic-key';
+  var ASK_MAX_TOK = 4096;   // a ceiling, not a target — length is set by the prompt
+
+  var ask        = $('ask');
+  var askLog     = $('ask-log');
+  var askForm    = $('ask-form');
+  var askInput   = $('ask-input');
+  var askSendBtn = $('ask-send');
+  var askKeyBox  = $('ask-key');
+  var askKeyIn   = $('ask-key-input');
+  var askFoot    = $('ask-foot-note');
+  var askForget  = $('btn-key-forget');
+
+  var askCtx     = null;   // { q, v, choice } — the card under discussion
+  var askHistory = [];     // the Messages API `messages` array for this card
+  var askBusy    = false;
+  var askAbort   = null;
+
+  /* localStorage throws in some private-browsing modes; degrade to "no key". */
+  function keyGet() {
+    try { return localStorage.getItem(ASK_KEY_LS) || ''; } catch (e) { return ''; }
+  }
+  function keySet(v) {
+    try {
+      if (v) localStorage.setItem(ASK_KEY_LS, v);
+      else   localStorage.removeItem(ASK_KEY_LS);
+    } catch (e) { /* non-fatal — the key just won't persist */ }
+  }
+
+  /* ---- the preloaded context -------------------------------------------- */
+  function askSystem(c) {
+    var q = c.q;
+    var correctLabel = q.correct === 'A' ? q.optionA : q.optionB;
+    var picked = c.choice === 'A' ? q.optionA : c.choice === 'B' ? q.optionB : null;
+    var did = c.v === 'right' ? 'got it right'
+            : c.v === 'wrong' ? 'got it wrong'
+            : 'skipped it';
+
+    return [
+      'You are a tutor inside Metric Board, a swipe-quiz app that drills business, offline, online and training metrics.',
+      'The user has just worked the card below and is asking you about it. The card and its explanation are on screen in front of them, so do not read them back.',
+      '',
+      '<card>',
+      'Topic: ' + q.topic,
+      'Question: ' + q.question,
+      'Left option (A): ' + q.optionA,
+      'Right option (B): ' + q.optionB,
+      'Correct answer: ' + q.correct + ' — ' + correctLabel,
+      "Explanation shown in the app: " + q.explanation,
+      'Outcome: the user ' + did + (picked ? ', choosing "' + picked + '"' : ''),
+      '</card>',
+      '',
+      'Answer their follow-ups about this card and the ideas around it. If they got it wrong, go at the specific confusion their choice points to rather than re-explaining from the top.',
+      'You are on a phone screen. Keep it to a few short paragraphs. Lead with the answer, then the reasoning.',
+      'Plain text only: no markdown, no headers, no bullet syntax, no LaTeX. Write formulas inline, like "precision = TP / (TP + FP)".',
+      'Drifting to neighbouring metrics topics is fine. If they ask something unrelated, answer briefly and leave it there.'
+    ].join('\n');
+  }
+
+  /* One-tap openers, picked to match how the card went. */
+  function askChips(c) {
+    if (c.v === 'wrong') {
+      return ['Why is my answer wrong?',
+              'How do I tell these two apart?',
+              'When would my answer have been right?'];
+    }
+    if (c.v === 'skip') {
+      return ['Explain this one from scratch',
+              "What's the intuition here?",
+              'Where does this actually get used?'];
+    }
+    return ["Why is that the answer?",
+            'When does this break down?',
+            "What's commonly confused with this?"];
+  }
+
+  /* ---- panel state ------------------------------------------------------- */
+  function setKb(px) {
+    document.documentElement.style.setProperty('--kb', px + 'px');
+  }
+
+  function askScroll() { askLog.scrollTop = askLog.scrollHeight; }
+
+  function askMode() {
+    var has = !!keyGet();
+    askKeyBox.classList.toggle('is-hidden', has);
+    askForm.classList.toggle('is-hidden', !has);
+    askForget.classList.toggle('is-hidden', !has);
+    askFoot.textContent = has ? ASK_MODEL + ' · key stored on this device' : '';
+    askSendBtn.disabled = askBusy;
+  }
+
+  function openAsk() {
+    if (!askCtx) return;
+    $('ask-topic').textContent = askCtx.q.topic;
+    $('ask-title').textContent = askCtx.q.question;
+    ask.classList.remove('is-hidden');
+    askMode();
+    if (!keyGet()) {
+      askKeyIn.focus({ preventScroll: true });
+    } else if (!('ontouchstart' in window)) {
+      // On touch, leave focus alone — the keyboard would cover the openers.
+      askInput.focus({ preventScroll: true });
+    }
+  }
+
+  function closeAsk() {
+    if (askAbort) { askAbort.abort(); askAbort = null; }
+    askBusy = false;
+    askSendBtn.disabled = false;
+    ask.classList.add('is-hidden');
+    setKb(0);
+  }
+
+  function askBubble(role, text) {
+    var el = document.createElement('div');
+    el.className = 'ask__msg ask__msg--' + role;
+    if (text !== undefined) el.textContent = text;
+    askLog.appendChild(el);
+    askScroll();
+    return el;
+  }
+
+  /* Empty state: one line of orientation plus the tappable openers. */
+  function askResetLog() {
+    askLog.innerHTML = '';
+    if (!keyGet() || !askCtx) return;
+
+    var hint = document.createElement('p');
+    hint.className = 'ask__hint';
+    hint.textContent =
+      'This card, your answer and the explanation are already loaded. Ask away.';
+    askLog.appendChild(hint);
+
+    var chips = document.createElement('div');
+    chips.className = 'ask__chips';
+    askChips(askCtx).forEach(function (text) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ask__chip';
+      b.textContent = text;
+      b.addEventListener('click', function () { askSubmit(text); });
+      chips.appendChild(b);
+    });
+    askLog.appendChild(chips);
+  }
+
+  function autosize() {
+    askInput.style.height = 'auto';
+    askInput.style.height = Math.min(124, askInput.scrollHeight) + 'px';
+  }
+
+  /* ---- send -------------------------------------------------------------- */
+  function askSubmit(text) {
+    text = String(text || '').trim();
+    if (!text || askBusy || !askCtx) return;
+
+    var key = keyGet();
+    if (!key) { askMode(); return; }
+
+    // First real message clears the empty state.
+    if (askLog.querySelector('.ask__hint')) askLog.innerHTML = '';
+
+    askBubble('user', text);
+    askHistory.push({ role: 'user', content: text });
+
+    askInput.value = '';
+    autosize();
+    askBusy = true;
+    askSendBtn.disabled = true;
+
+    var bubble = askBubble('bot');
+    bubble.innerHTML = '<span class="ask__dots"><i></i><i></i><i></i></span>';
+
+    var got = '';
+    var stop = null;
+
+    function settle() {
+      askBusy = false;
+      askSendBtn.disabled = false;
+      askAbort = null;
+    }
+
+    askStream(
+      key,
+      function onText(chunk) {
+        if (!got) bubble.textContent = '';   // drop the waiting dots
+        got += chunk;
+        bubble.textContent = got;
+        askScroll();
+      },
+      function onStop(reason) { stop = reason; },
+      function onDone() {
+        settle();
+        if (!got) {
+          bubble.remove();
+          askHistory.pop();                  // keep the thread clean for a retry
+          askBubble('note', stop === 'refusal'
+            ? 'Claude declined to answer that one.'
+            : 'Came back empty. Try asking again.');
+        } else {
+          if (stop === 'max_tokens') {
+            bubble.textContent = got + '\n\n(cut off — ask for the rest)';
+          }
+          askHistory.push({ role: 'assistant', content: got });
+        }
+        askScroll();
+      },
+      function onError(err) {
+        settle();
+        if (err && err.name === 'AbortError') {
+          bubble.remove();
+          if (got) askHistory.push({ role: 'assistant', content: got });
+          else askHistory.pop();
+          return;
+        }
+
+        if (got) {
+          askHistory.push({ role: 'assistant', content: got });
+        } else {
+          bubble.remove();
+          askHistory.pop();
+        }
+
+        var msg = (err && err.message) || 'Request failed.';
+        if (err instanceof TypeError) {
+          msg = 'Could not reach the API. Check your connection.';
+        }
+        askBubble('note', msg);
+        askScroll();
+      }
+    );
+  }
+
+  function askStream(key, onText, onStop, onDone, onError) {
+    askAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+    var body = {
+      model: ASK_MODEL,
+      max_tokens: ASK_MAX_TOK,
+      stream: true,
+      system: askSystem(askCtx),
+      // Thinking is on by default on Opus 5. Low effort keeps a tutoring reply
+      // quick and cheap; turning thinking off outright is the worse trade here,
+      // since it can leak <thinking> tags into the visible answer.
+      output_config: { effort: 'low' },
+      messages: askHistory
+    };
+
+    fetch(ASK_URL, {
+      method: 'POST',
+      signal: askAbort ? askAbort.signal : undefined,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': ASK_VERSION,
+        // Opts this origin into CORS on the Messages API. Only reasonable
+        // because the key is the user's own and stays on their device.
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          throw new Error(askHttpError(res.status, t));
+        });
+      }
+      // Stream when the browser hands us a readable body; otherwise read the
+      // whole SSE payload at once and run it through the same parser.
+      if (res.body && res.body.getReader && typeof TextDecoder !== 'undefined') {
+        return askPump(res.body.getReader(), onText, onStop);
+      }
+      return res.text().then(function (t) { askParse(t, onText, onStop); });
+    }).then(onDone, onError);
+  }
+
+  function askPump(reader, onText, onStop) {
+    var dec = new TextDecoder();
+    var buf = '';
+    return (function step() {
+      return reader.read().then(function (r) {
+        if (r.done) { askParse(buf, onText, onStop); return; }
+        buf += dec.decode(r.value, { stream: true });
+        // Only parse whole lines; a partial one waits for the next chunk.
+        var cut = buf.lastIndexOf('\n');
+        if (cut >= 0) {
+          askParse(buf.slice(0, cut + 1), onText, onStop);
+          buf = buf.slice(cut + 1);
+        }
+        return step();
+      });
+    })();
+  }
+
+  /* Minimal SSE reader — only `data:` lines matter to us. Thinking deltas are
+     ignored on purpose, so only the answer itself reaches the bubble. */
+  function askParse(chunk, onText, onStop) {
+    chunk.split('\n').forEach(function (line) {
+      if (line.slice(0, 5) !== 'data:') return;
+      var raw = line.slice(5).trim();
+      if (!raw) return;
+
+      var ev;
+      try { ev = JSON.parse(raw); } catch (e) { return; }
+
+      if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+        onText(ev.delta.text);
+      } else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) {
+        onStop(ev.delta.stop_reason);
+      } else if (ev.type === 'error') {
+        throw new Error((ev.error && ev.error.message) || 'The API returned a stream error.');
+      }
+    });
+  }
+
+  function askHttpError(status, text) {
+    var msg = '';
+    try {
+      var j = JSON.parse(text);
+      msg = (j && j.error && j.error.message) || '';
+    } catch (e) { /* body wasn't JSON */ }
+
+    if (status === 401 || status === 403) {
+      return 'That API key was rejected. Forget it below and save another.';
+    }
+    if (status === 429) return 'Rate limited. Wait a moment and try again.';
+    if (status === 529) return 'The API is overloaded right now. Try again shortly.';
+    if (status >= 500)  return 'Server error from the API (' + status + '). Try again.';
+    return msg || ('Request failed (' + status + ').');
+  }
+
+  /* ---- ask wiring -------------------------------------------------------- */
+  $('btn-ask').addEventListener('click', function (e) {
+    e.stopPropagation();          // the verdict sheet advances on any tap
+    openAsk();
+  });
+  $('btn-ask-close').addEventListener('click', closeAsk);
+  ask.addEventListener('click', function (e) {
+    if (e.target === ask) closeAsk();   // tap the dimmed margin to dismiss
+  });
+
+  $('btn-key-save').addEventListener('click', function () {
+    var v = askKeyIn.value.trim();
+    if (!v) { askKeyIn.focus(); return; }
+    keySet(v);
+    askKeyIn.value = '';
+    askMode();
+    askResetLog();
+    askInput.focus({ preventScroll: true });
+  });
+  askKeyIn.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); $('btn-key-save').click(); }
+  });
+
+  askForget.addEventListener('click', function () {
+    keySet('');
+    askHistory = [];
+    askMode();
+    askResetLog();
+  });
+
+  askForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    askSubmit(askInput.value);
+  });
+  askInput.addEventListener('input', autosize);
+  askInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      askSubmit(askInput.value);
+    }
+  });
+
+  /* Keep the composer above the on-screen keyboard on iOS. */
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      if (ask.classList.contains('is-hidden')) { setKb(0); return; }
+      var vv = window.visualViewport;
+      setKb(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+      askScroll();
+    });
   }
 
   /* ---- summary ----------------------------------------------------------- */
@@ -359,6 +764,7 @@
     index   = 0;
     results = [];
     locked  = false;
+    closeAsk();
     verdict.classList.add('is-hidden');
     show('quiz');
     renderStack();
@@ -378,6 +784,12 @@
   verdict.addEventListener('click', nextCard);   // tap anywhere on the sheet
 
   document.addEventListener('keydown', function (e) {
+    // While the Ask panel is up it owns the keyboard — otherwise a space typed
+    // into the composer would advance the deck out from under the chat.
+    if (!ask.classList.contains('is-hidden')) {
+      if (e.key === 'Escape') closeAsk();
+      return;
+    }
     if (!verdict.classList.contains('is-hidden')) {
       if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); nextCard(); }
       return;
