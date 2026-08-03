@@ -1,0 +1,4 @@
+.DS_Store
+
+# Redundant archive — duplicates every file already tracked here.
+metric-board.zip

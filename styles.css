@@ -1,0 +1,466 @@
+/* =============================================================================
+   styles.css — chalkboard aesthetic, mobile first.
+
+   Layout rules of thumb used throughout:
+   · Animate transform + opacity only. Nothing else touches layout mid-gesture.
+   · Every edge that could meet a notch or a home indicator gets an
+     env(safe-area-inset-*) pad.
+   · 100dvh with a 100vh fallback, because mobile browser chrome resizes vh.
+   ============================================================================= */
+
+/* ---- tokens ------------------------------------------------------------- */
+:root {
+  --board:        #1b2528;   /* slate green-grey, the board itself       */
+  --board-deep:   #131a1c;   /* frame / recessed areas                   */
+  --board-lift:   #222e31;   /* card face, one step off the board        */
+  --chalk:        #f3f0e6;   /* chalk white                              */
+  --chalk-soft:   rgba(243, 240, 230, 0.62);
+  --chalk-faint:  rgba(243, 240, 230, 0.20);
+  --chalk-hair:   rgba(243, 240, 230, 0.13);
+
+  /* Direction tints. Deliberately NOT green/red: the two sides are two
+     answers, not right and wrong. Correctness gets its own colours below. */
+  --tint-a:       #8fb9d9;   /* left  — chalk blue   */
+  --tint-b:       #e9c37e;   /* right — chalk amber  */
+  --tint-skip:    #b9a8d6;   /* up    — chalk violet */
+
+  --right:        #8fd6a0;   /* verdict: correct     */
+  --wrong:        #e88a7d;   /* verdict: incorrect   */
+
+  --font-display: "Bradley Hand", "Chalkduster", "Segoe Print", "Brush Script MT",
+                  "Comic Sans MS", cursive;
+  --font-body:    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+                  "Helvetica Neue", Arial, sans-serif;
+
+  --safe-t: env(safe-area-inset-top,    0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left,   0px);
+  --safe-r: env(safe-area-inset-right,  0px);
+
+  --ease-spring: cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+/* ---- reset -------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;         /* kills iOS rubber-banding under the card */
+}
+
+body {
+  background: var(--board);
+  color: var(--chalk);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
+}
+
+/* Chalk dust: fine noise, a soft vignette, and faint horizontal wipe streaks
+   as if someone cleared the board with a dry cloth. Purely decorative. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(97deg,
+      rgba(243,240,230,0.030) 0px,
+      rgba(243,240,230,0.030) 2px,
+      transparent 2px,
+      transparent 26px),
+    radial-gradient(120% 90% at 50% 12%,
+      rgba(243,240,230,0.055) 0%,
+      rgba(0,0,0,0) 58%),
+    radial-gradient(140% 110% at 50% 100%,
+      rgba(0,0,0,0.42) 0%,
+      rgba(0,0,0,0) 60%);
+  mix-blend-mode: screen;
+}
+
+/* ---- screens ------------------------------------------------------------ */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+}
+.is-hidden { display: none !important; }
+
+.screen__inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding:
+    calc(var(--safe-t) + 32px)
+    calc(var(--safe-r) + 26px)
+    calc(var(--safe-b) + 28px)
+    calc(var(--safe-l) + 26px);
+}
+.screen__inner--scroll {
+  justify-content: flex-start;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- type --------------------------------------------------------------- */
+.display {
+  font-family: var(--font-display);
+  font-size: clamp(3.2rem, 17vw, 5.4rem);
+  line-height: 0.92;
+  font-weight: 400;
+  margin: 0;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 0 rgba(243,240,230,0.18);
+}
+.display--sm { font-size: clamp(2.2rem, 11vw, 3.2rem); }
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--chalk-soft);
+}
+
+.lede { margin: 0; color: var(--chalk-soft); max-width: 34ch; }
+
+.footnote {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--chalk-faint);
+  letter-spacing: 0.04em;
+}
+
+/* ---- legend on the start screen ----------------------------------------- */
+.legend { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; }
+.legend li {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--chalk-soft); font-size: 0.95rem;
+}
+.legend__key {
+  width: 38px; height: 38px; flex: 0 0 38px;
+  display: grid; place-items: center;
+  border: 1.5px solid currentColor;
+  border-radius: 50% 46% 52% 48%;   /* hand-drawn wobble */
+  font-size: 1.1rem;
+}
+.legend__key--a { color: var(--tint-a); }
+.legend__key--b { color: var(--tint-b); }
+.legend__key--s { color: var(--tint-skip); }
+
+/* ---- buttons ------------------------------------------------------------ */
+.btn-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+
+.btn {
+  appearance: none;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--chalk);
+  background: transparent;
+  border: 1.5px solid var(--chalk-faint);
+  border-radius: 14px 13px 15px 12px;   /* uneven, like a chalk box */
+  padding: 14px 22px;
+  min-height: 50px;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.btn:active { transform: scale(0.97); }
+.btn:hover  { border-color: var(--chalk-soft); }
+.btn--primary { background: rgba(243,240,230,0.10); border-color: var(--chalk-soft); }
+
+:focus-visible {
+  outline: 2px dashed var(--tint-b);
+  outline-offset: 3px;
+}
+
+/* ---- top bar ------------------------------------------------------------ */
+.topbar {
+  position: relative;
+  z-index: 4;
+  padding:
+    calc(var(--safe-t) + 14px)
+    calc(var(--safe-r) + 20px) 0
+    calc(var(--safe-l) + 20px);
+}
+.progress {
+  height: 3px;
+  background: var(--chalk-hair);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--chalk-soft);
+  transition: width 0.35s ease;
+}
+.topbar__row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--chalk-faint);
+}
+.tally { color: var(--chalk-soft); }
+
+/* ---- chalk rails (the signature element) --------------------------------
+   The two answers are written down the board edges. They brighten as the card
+   is dragged toward them, so the direction→answer mapping is legible mid-drag
+   rather than something you have to remember. --------------------------- */
+.rail {
+  position: fixed;
+  top: 0; bottom: 0;
+  width: 30vw;
+  max-width: 190px;
+  display: flex;
+  align-items: center;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.22;
+  transition: opacity 0.18s ease;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  line-height: 1.25;
+}
+.rail span { display: block; padding: 0 4px; }
+.rail--left  { left:  calc(var(--safe-l) + 8px); color: var(--tint-a); text-align: left;  }
+.rail--right { right: calc(var(--safe-r) + 8px); color: var(--tint-b); text-align: right; justify-content: flex-end; }
+.rail.is-lit { opacity: 0.95; }
+
+/* ---- card stage --------------------------------------------------------- */
+.stage {
+  position: relative;
+  flex: 1;
+  margin:
+    14px
+    calc(var(--safe-r) + 18px)
+    10px
+    calc(var(--safe-l) + 18px);
+  z-index: 2;
+  touch-action: none;          /* we own the gesture; stop the browser scrolling */
+}
+
+.card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px 24px;
+  background:
+    linear-gradient(160deg, rgba(243,240,230,0.055), rgba(243,240,230,0.015)),
+    var(--board-lift);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 22px 20px 24px 21px;
+  box-shadow: 0 18px 42px rgba(0,0,0,0.42);
+  will-change: transform, opacity;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* Cards deeper in the stack sit slightly back and dimmed. */
+.card--behind { transform: translate3d(0, 14px, 0) scale(0.955); opacity: 0.55; }
+.card--top    { z-index: 3; }
+
+/* Snap-back and deal-in animations. Removed during an active drag so the card
+   tracks the finger with zero lag. */
+.card--animate { transition: transform 0.42s var(--ease-spring), opacity 0.3s ease; }
+.card--fly     { transition: transform 0.34s cubic-bezier(0.4,0,1,1), opacity 0.34s ease; }
+
+.card__tag {
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--chalk-faint);
+}
+.card__q {
+  font-size: clamp(1.28rem, 5.4vw, 1.7rem);
+  line-height: 1.32;
+  margin: 0;
+  font-weight: 500;
+}
+.card__spacer { flex: 1; }
+
+.card__opts { display: flex; gap: 12px; align-items: stretch; }
+.card__opt {
+  flex: 1;
+  border-top: 1.5px solid var(--chalk-hair);
+  padding-top: 12px;
+  font-size: 0.98rem;
+  line-height: 1.3;
+  color: var(--chalk-soft);
+}
+.card__opt b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+}
+.card__opt--a { color: var(--chalk-soft); }
+.card__opt--a b { color: var(--tint-a); }
+.card__opt--b { text-align: right; }
+.card__opt--b b { color: var(--tint-b); }
+
+/* Direction tint washed over the card face while dragging. */
+.card__wash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s linear;
+}
+.card__wash--a    { background: radial-gradient(90% 120% at 0%   50%, var(--tint-a)    0%, transparent 72%); }
+.card__wash--b    { background: radial-gradient(90% 120% at 100% 50%, var(--tint-b)    0%, transparent 72%); }
+.card__wash--skip { background: radial-gradient(120% 80% at 50%  0%,  var(--tint-skip) 0%, transparent 70%); }
+
+/* ---- tap controls ------------------------------------------------------- */
+.controls {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  gap: 10px;
+  padding:
+    2px
+    calc(var(--safe-r) + 18px)
+    calc(var(--safe-b) + 16px)
+    calc(var(--safe-l) + 18px);
+}
+.ctrl {
+  flex: 1;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  min-height: 62px;
+  padding: 9px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: rgba(243,240,230,0.045);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 15px 13px 16px 14px;
+  color: var(--chalk-soft);
+  transition: transform 0.12s ease, background 0.18s ease;
+}
+.ctrl:active { transform: scale(0.96); background: rgba(243,240,230,0.11); }
+.ctrl--skip  { flex: 0 0 86px; }
+.ctrl__arrow { font-size: 1.05rem; line-height: 1; }
+.ctrl--a .ctrl__arrow { color: var(--tint-a); }
+.ctrl--b .ctrl__arrow { color: var(--tint-b); }
+.ctrl--skip .ctrl__arrow { color: var(--tint-skip); }
+.ctrl__label {
+  font-size: 0.8rem;
+  line-height: 1.15;
+  text-align: center;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- verdict ------------------------------------------------------------ */
+.verdict {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(10,14,15,0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: fade-in 0.16s ease both;
+}
+.verdict__card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--board-deep);
+  border-top: 1.5px solid var(--chalk-hair);
+  border-radius: 24px 22px 0 0;
+  padding:
+    24px
+    calc(var(--safe-r) + 24px)
+    calc(var(--safe-b) + 24px)
+    calc(var(--safe-l) + 24px);
+  animation: rise 0.26s var(--ease-spring) both;
+}
+.verdict__mark {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  line-height: 1;
+}
+.verdict--right .verdict__mark { color: var(--right); }
+.verdict--wrong .verdict__mark { color: var(--wrong); }
+.verdict--skip  .verdict__mark { color: var(--tint-skip); }
+.verdict__line { margin: 0; font-size: 1rem; color: var(--chalk); }
+.verdict__why  { margin: 0; font-size: 0.95rem; color: var(--chalk-soft); }
+.verdict .btn  { align-self: flex-start; margin-top: 4px; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise    { from { transform: translate3d(0,100%,0); } to { transform: translate3d(0,0,0); } }
+
+/* ---- summary ------------------------------------------------------------ */
+.scoreline { margin: 6px 0 2px; }
+.scoreline__big {
+  font-family: var(--font-display);
+  font-size: clamp(4rem, 22vw, 6.5rem);
+  line-height: 0.9;
+}
+.scoreline__meta {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  color: var(--chalk-soft); font-size: 0.92rem; margin-top: 8px;
+}
+
+.review-h {
+  margin: 30px 0 10px;
+  font-size: 0.76rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--chalk-faint);
+  border-top: 1px solid var(--chalk-hair);
+  padding-top: 18px;
+}
+.review-item { margin: 0 0 20px; }
+.review-item__q { margin: 0 0 6px; font-size: 1rem; }
+.review-item__a { margin: 0 0 4px; font-size: 0.9rem; }
+.review-item__a b { font-weight: 600; }
+.review-item--wrong .review-item__a b { color: var(--wrong); }
+.review-item--skip  .review-item__a b { color: var(--tint-skip); }
+.review-item__why { margin: 0; font-size: 0.9rem; color: var(--chalk-soft); }
+.review-empty { color: var(--chalk-soft); }
+
+/* ---- accessibility ------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.05ms !important;
+  }
+}
+
+/* Roomier on tablets and desktop, where the deck is being tested with a mouse. */
+@media (min-width: 620px) {
+  .stage  { max-width: 520px; margin-left: auto; margin-right: auto; }
+  .controls { max-width: 556px; margin: 0 auto; }
+  .verdict__card { max-width: 640px; margin: 0 auto; border-radius: 24px 22px 0 0; }
+}

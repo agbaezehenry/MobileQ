@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Metric Board — swipe quiz</title>
+
+  <!-- viewport-fit=cover lets the layout run under the notch; the CSS then pads
+       it back with env(safe-area-inset-*). Without cover, the insets are all 0. -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="description" content="Swipe-based drill on business, offline, online and training metrics." />
+
+  <!-- ---- PWA manifest + theming -------------------------------------------
+       Relative paths only. This is served from a GitHub Pages *project* page
+       (username.github.io/repo-name/), so a leading slash would 404. -->
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#1b2528" />
+
+  <!-- ---- iOS standalone bits ---------------------------------------------
+       iOS ignores manifest.json for display mode and the home-screen icon,
+       so these have to be declared separately. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Metric Board" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="icon" href="./icons/icon-192.png" />
+
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <!-- ====================================================================== -->
+  <!-- START SCREEN                                                           -->
+  <!-- ====================================================================== -->
+  <section class="screen screen--start" id="screen-start">
+    <div class="screen__inner">
+      <p class="eyebrow">a drill in four families</p>
+      <h1 class="display">Metric<br />Board</h1>
+      <p class="lede">
+        Business, offline, online, training. Swipe left or right to answer,
+        swipe up when you'd rather be told.
+      </p>
+
+      <ul class="legend">
+        <li><span class="legend__key legend__key--a">←</span> the left-hand answer</li>
+        <li><span class="legend__key legend__key--b">→</span> the right-hand answer</li>
+        <li><span class="legend__key legend__key--s">↑</span> skip — flags it for review</li>
+      </ul>
+
+      <div class="btn-row">
+        <button class="btn btn--primary" id="btn-start">Start the deck</button>
+        <button class="btn" id="btn-start-shuffle">Shuffle first</button>
+      </div>
+      <p class="footnote" id="deck-count"></p>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <!-- QUIZ SCREEN                                                            -->
+  <!-- ====================================================================== -->
+  <section class="screen screen--quiz is-hidden" id="screen-quiz">
+
+    <header class="topbar">
+      <div class="progress" aria-hidden="true"><i id="progress-fill"></i></div>
+      <div class="topbar__row">
+        <span class="counter" id="counter">1 / 1</span>
+        <span class="tally" id="tally">0 right</span>
+      </div>
+    </header>
+
+    <!-- The chalk rails: option labels written on the board edges. They brighten
+         as you drag toward them, so the mapping is visible before you commit. -->
+    <div class="rail rail--left"  id="rail-a"><span id="rail-a-text"></span></div>
+    <div class="rail rail--right" id="rail-b"><span id="rail-b-text"></span></div>
+
+    <!-- Cards are injected here. Only the top one is interactive. -->
+    <main class="stage" id="stage" aria-live="polite"></main>
+
+    <nav class="controls" aria-label="Answer without swiping">
+      <button class="ctrl ctrl--a"    id="btn-a"    type="button"><span class="ctrl__arrow">←</span><span class="ctrl__label" id="btn-a-text">A</span></button>
+      <button class="ctrl ctrl--skip" id="btn-skip" type="button"><span class="ctrl__arrow">↑</span><span class="ctrl__label">Skip</span></button>
+      <button class="ctrl ctrl--b"    id="btn-b"    type="button"><span class="ctrl__arrow">→</span><span class="ctrl__label" id="btn-b-text">B</span></button>
+    </nav>
+
+    <!-- Verdict + explanation. Shown after every committed answer. -->
+    <div class="verdict is-hidden" id="verdict" role="status">
+      <div class="verdict__card">
+        <p class="verdict__mark" id="verdict-mark"></p>
+        <p class="verdict__line" id="verdict-line"></p>
+        <p class="verdict__why" id="verdict-why"></p>
+        <button class="btn btn--primary" id="btn-next">Next card</button>
+        <p class="footnote">tap anywhere, or press space</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <!-- SUMMARY SCREEN                                                         -->
+  <!-- ====================================================================== -->
+  <section class="screen screen--summary is-hidden" id="screen-summary">
+    <div class="screen__inner screen__inner--scroll">
+      <p class="eyebrow">deck finished</p>
+      <h2 class="display display--sm">The board</h2>
+
+      <div class="scoreline">
+        <div class="scoreline__big" id="sum-accuracy">0%</div>
+        <div class="scoreline__meta">
+          <span id="sum-correct">0 right</span>
+          <span id="sum-wrong">0 wrong</span>
+          <span id="sum-skipped">0 skipped</span>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn--primary" id="btn-restart">Run it again</button>
+        <button class="btn" id="btn-reshuffle">Shuffle &amp; restart</button>
+      </div>
+
+      <div id="review-block"></div>
+    </div>
+  </section>
+
+  <!-- questions.js first: app.js reads window.QUESTIONS at boot. -->
+  <script src="./questions.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
