@@ -47,14 +47,23 @@
                     { type: "open", question, answer, keyPoints, explanation } ]
    }
 
-   Deck theme: metrics, plus the systems they get measured on. Four metric families —
-     BUSINESS  what the company cares about (money, users, retention)
-     OFFLINE   what you measure on held-out data before shipping
-     ONLINE    what you measure on live traffic and in experiments
-     TRAINING  what you watch on the loss curve while the model is learning
-   — with TAXONOMY on telling those apart, MONITORING on drift, and SYSTEMS on the
-   machinery around the model: feature stores, pipelines, deployment, failure modes,
-   retrieval architecture, position bias, and cold start.
+   Topics
+   ------
+   The part of `topic` before the `·` is the family, and the start screen builds
+   its topic chips from whatever families appear here — so a new subject needs no
+   change anywhere else. What the deck currently holds:
+
+     METRICS   four families of them — BUSINESS (money, users, retention),
+               OFFLINE (held-out data, before shipping), ONLINE (live traffic and
+               experiments) and TRAINING (the loss curve itself) — plus TAXONOMY
+               on telling those apart and MONITORING on drift.
+     SYSTEMS   the machinery around the model: feature stores, pipelines,
+               deployment, failure modes, retrieval architecture, position bias,
+               cold start.
+     REDIS     data structures, delivery guarantees, clustering, durability.
+     ELASTICSEARCH  distributed search, pagination, indexing, document modelling.
+
+   The redis and elasticsearch families are written cards throughout.
    ============================================================================= */
 
 const QUESTIONS = [

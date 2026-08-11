@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Metric Board — swipe quiz</title>
+  <title>Chalkboard — swipe quiz</title>
 
   <!-- viewport-fit=cover lets the layout run under the notch; the CSS then pads
        it back with env(safe-area-inset-*). Without cover, the insets are all 0. -->
   <meta name="viewport"
         content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <meta name="description" content="Swipe-based drill on business, offline, online and training metrics." />
+  <meta name="description" content="Swipe-based drill on machine-learning metrics and backend systems." />
 
   <!-- ---- PWA manifest + theming -------------------------------------------
        Relative paths only. This is served from a GitHub Pages *project* page
@@ -22,7 +22,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Metric Board" />
+  <meta name="apple-mobile-web-app-title" content="Chalkboard" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="icon" href="./icons/icon-192.png" />
 
@@ -35,8 +35,10 @@
   <!-- ====================================================================== -->
   <section class="screen screen--start" id="screen-start">
     <div class="screen__inner screen__inner--scroll screen__inner--start">
-      <p class="eyebrow">metrics · systems · redis · elasticsearch</p>
-      <h1 class="display">Metric<br />Board</h1>
+      <!-- The chip row below already names every subject, so this says what the
+           deck is like rather than what is in it — and never goes stale. -->
+      <p class="eyebrow">swipe it, or write it out</p>
+      <h1 class="display">Chalk<br />Board</h1>
       <p class="lede">
         Swipe left or right to answer, swipe up when you'd rather be told.
         Pick a topic below, or take the lot.

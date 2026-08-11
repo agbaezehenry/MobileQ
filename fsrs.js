@@ -61,6 +61,8 @@
      always count: forgetting is information no matter how recent the last look. */
   var SESSION_MS = 30 * 60000;
 
+  /* Pre-rename prefix, kept on purpose: this key holds every card's review
+     history, and renaming it with the app would orphan the lot. See app.js. */
   var LS_KEY = 'metric-board.fsrs.v1';
 
   /* ---- store ------------------------------------------------------------ */

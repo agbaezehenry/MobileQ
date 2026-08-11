@@ -1,4 +1,4 @@
-# Metric Board
+# Chalkboard
 
 A swipe-based quiz PWA. One question per card, filling the screen: swipe **left** for the
 left-hand answer, **right** for the right-hand answer, **up** to skip. Vanilla HTML, CSS
@@ -182,6 +182,12 @@ FSRS rather than inside it — the same split Anki uses.
 `R(t) = (1 + (19/81)·t/S)^-0.5`, with the FSRS-5 default weights. Every card carries `{s, d,
 reps, lapses, last, due}` in `localStorage` under `metric-board.fsrs.v1`, keyed by question
 `id`. Nothing leaves the device.
+
+> **That prefix is not a typo.** The app was called *Metric Board* before it grew past
+> metrics, and the four `localStorage` keys — `metric-board.fsrs.v1`, `.mode`, `.topics`,
+> `.anthropic-key` — kept the old name on purpose. They hold real review history and a real
+> API key; renaming them would silently orphan the lot on the next load, for no benefit
+> anyone can see. The prefix is storage, not branding.
 
 Grades come off the swipe. A miss or a skip is **Again**. A correct answer is graded by
 hesitation, since that is the only other signal a two-choice card offers: under 4.5s is

@@ -44,6 +44,10 @@
      off and the tick to register, then deals the next one. */
   var FAST_ADVANCE_MS = 300;
 
+  /* The app was called Metric Board before it grew past metrics. The localStorage
+     prefix deliberately did NOT follow the rename: these keys hold a real user's
+     review history, pace and API key, and renaming them would silently orphan all
+     of it on the next load. The prefix is storage, not branding — leave it. */
   var MODE_LS   = 'metric-board.mode';
   var TOPICS_LS = 'metric-board.topics';
 
@@ -957,7 +961,7 @@
     card.push('</card>');
 
     return [
-      'You are a tutor inside Metric Board, a swipe-quiz app that drills business, offline, online and training metrics.',
+      'You are a tutor inside Chalkboard, a swipe-quiz app that drills machine-learning metrics and the backend systems around them.',
       'The user has just worked the card below and is asking you about it. The card and its explanation are on screen in front of them, so do not read them back.',
       ''
     ].concat(card).concat([
@@ -966,7 +970,7 @@
       'If they wrote their own answer, you may judge it on the substance — including disagreeing with how it was marked, if they make a fair case.',
       'You are on a phone screen. Keep it to a few short paragraphs. Lead with the answer, then the reasoning.',
       'Plain text only: no markdown, no headers, no bullet syntax, no LaTeX. Write formulas inline, like "precision = TP / (TP + FP)".',
-      'Drifting to neighbouring metrics topics is fine. If they ask something unrelated, answer briefly and leave it there.'
+      'Drifting to neighbouring topics is fine. If they ask something unrelated, answer briefly and leave it there.'
     ]).join('\n');
   }
 
@@ -1275,7 +1279,7 @@
 
   function gradeSystem() {
     return [
-      'You are marking a short written answer in Metric Board, a drill on business, offline, online and training metrics and the systems around them.',
+      'You are marking a short written answer in Chalkboard, a drill on machine-learning metrics and the backend systems around them.',
       'You are given the question, the reference answer the deck ships with, and what the learner wrote. Mark the learner on substance only.',
       '',
       'They do not have to match the reference answer\'s wording, structure or length, and they are not expected to cover anything the question did not ask for.',

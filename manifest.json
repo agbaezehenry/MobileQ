@@ -1,7 +1,7 @@
 {
-  "name": "Metric Board — swipe quiz",
-  "short_name": "Metric Board",
-  "description": "A swipe drill on business, offline, online and training metrics.",
+  "name": "Chalkboard — swipe quiz",
+  "short_name": "Chalkboard",
+  "description": "A swipe drill on machine-learning metrics and backend systems.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
