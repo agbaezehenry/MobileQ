@@ -26,6 +26,7 @@
 
   --right:        #8fd6a0;   /* verdict: correct     */
   --wrong:        #e88a7d;   /* verdict: incorrect   */
+  --part:         #e9c37e;   /* verdict: half right — written answers only */
 
   --font-display: "Bradley Hand", "Chalkduster", "Segoe Print", "Brush Script MT",
                   "Comic Sans MS", cursive;
@@ -97,6 +98,11 @@ body::before {
 }
 .is-hidden { display: none !important; }
 
+/* --kbq is the on-screen keyboard's height while a written card is being
+   answered, measured off visualViewport in app.js. Padding the screen by it
+   shrinks the stage instead of letting the keyboard cover the controls. */
+.screen--quiz { padding-bottom: var(--kbq, 0px); }
+
 .screen__inner {
   flex: 1;
   display: flex;
@@ -163,6 +169,7 @@ body::before {
 .legend__key--a { color: var(--tint-a); }
 .legend__key--b { color: var(--tint-b); }
 .legend__key--s { color: var(--tint-skip); }
+.legend__key--w { color: var(--right); }
 
 /* ---- buttons ------------------------------------------------------------ */
 .btn-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
@@ -352,6 +359,9 @@ body::before {
   z-index: 2;
   touch-action: none;          /* we own the gesture; stop the browser scrolling */
 }
+/* Written cards have no swipe to protect, and touch-action on the stage would
+   otherwise stop a finger scrolling inside the textarea. Hand it back. */
+.stage.is-writing { touch-action: auto; }
 
 .card {
   position: absolute;
@@ -372,8 +382,9 @@ body::before {
   overflow: hidden;
 }
 
-/* Cards deeper in the stack sit slightly back and dimmed. */
-.card--behind { transform: translate3d(0, 14px, 0) scale(0.955); opacity: 0.55; }
+/* Cards deeper in the stack sit slightly back and dimmed. Nothing on them is
+   reachable — the textarea on a written card behind must not take focus. */
+.card--behind { transform: translate3d(0, 14px, 0) scale(0.955); opacity: 0.55; pointer-events: none; }
 .card--top    { z-index: 3; }
 
 /* Snap-back and deal-in animations. Removed during an active drag so the card
@@ -387,6 +398,14 @@ body::before {
   text-transform: uppercase;
   color: var(--chalk-faint);
 }
+/* Which step of a scenario this is. Sits on the topic line so the card head
+   stays one row tall however deep the chain goes. */
+.card__step {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--chalk-hair);
+  color: var(--tint-skip);
+}
 .card__q {
   font-size: clamp(1.28rem, 5.4vw, 1.7rem);
   line-height: 1.32;
@@ -394,6 +413,47 @@ body::before {
   font-weight: 500;
 }
 .card__spacer { flex: 1; }
+
+/* ---- scenario setup -----------------------------------------------------
+   The stem, repeated on every step of the chain, so a follow-up met on its own
+   an hour later still makes sense. Clamped rather than scrolled: the stage owns
+   the touch gesture, so a scroll region inside a card would not answer to a
+   finger. Keep authored stems to two or three sentences. */
+.card__scene {
+  margin: 0;
+  padding-left: 13px;
+  border-left: 2px solid var(--chalk-hair);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--chalk-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* With a stem above it the question gets less room, so it drops a step. */
+.card--scene .card__q { font-size: clamp(1.12rem, 4.5vw, 1.42rem); }
+
+/* ---- written answers ----------------------------------------------------
+   No left, no right: the card is a page to write on. */
+.card__write { display: flex; flex-direction: column; gap: 8px; }
+.card__answer {
+  width: 100%;
+  min-height: 96px;
+  max-height: 42vh;
+  appearance: none;
+  font: inherit;
+  font-size: 1rem;               /* >=16px, or iOS zooms the page on focus */
+  line-height: 1.45;
+  resize: none;
+  color: var(--chalk);
+  background: rgba(243, 240, 230, 0.05);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 15px 13px 16px 14px;
+  padding: 12px 14px;
+}
+.card__answer::placeholder { color: var(--chalk-faint); }
+.card__answer:focus { border-color: rgba(143, 214, 160, 0.42); outline: none; }
 
 .card__opts { display: flex; gap: 12px; align-items: stretch; }
 .card__opt {
@@ -460,10 +520,13 @@ body::before {
 }
 .ctrl:active { transform: scale(0.96); background: rgba(243,240,230,0.11); }
 .ctrl--skip  { flex: 0 0 86px; }
+.ctrl--send  { background: rgba(143, 214, 160, 0.10); border-color: rgba(143, 214, 160, 0.34); }
+.ctrl--send:active { background: rgba(143, 214, 160, 0.18); }
 .ctrl__arrow { font-size: 1.05rem; line-height: 1; }
 .ctrl--a .ctrl__arrow { color: var(--tint-a); }
 .ctrl--b .ctrl__arrow { color: var(--tint-b); }
 .ctrl--skip .ctrl__arrow { color: var(--tint-skip); }
+.ctrl--send .ctrl__arrow { color: var(--right); }
 .ctrl__label {
   font-size: 0.8rem;
   line-height: 1.15;
@@ -518,6 +581,12 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* A marked written answer stacks four blocks — what you wrote, the feedback,
+     the model answer, the explanation — which can outgrow a short phone. The
+     sheet is anchored to the bottom, so without this the top is unreachable. */
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--board-deep);
   border-top: 1.5px solid var(--chalk-hair);
   border-radius: 24px 22px 0 0;
@@ -534,12 +603,40 @@ body::before {
   font-size: 1.9rem;
   line-height: 1;
 }
-.verdict--right .verdict__mark { color: var(--right); }
-.verdict--wrong .verdict__mark { color: var(--wrong); }
-.verdict--skip  .verdict__mark { color: var(--tint-skip); }
+.verdict--right   .verdict__mark { color: var(--right); }
+.verdict--wrong   .verdict__mark { color: var(--wrong); }
+.verdict--part    .verdict__mark { color: var(--part); }
+.verdict--skip    .verdict__mark { color: var(--tint-skip); }
+.verdict--marking .verdict__mark { color: var(--chalk-soft); }
 .verdict__line { margin: 0; font-size: 1rem; color: var(--chalk); }
 .verdict__why  { margin: 0; font-size: 0.95rem; color: var(--chalk-soft); }
 .verdict .btn  { align-self: flex-start; margin-top: 4px; }
+
+/* What you wrote, quoted back. Capped so a long answer cannot push the model
+   answer and the explanation off a short phone. */
+.verdict__said {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--chalk-soft);
+  font-style: italic;
+  padding-left: 13px;
+  border-left: 2px solid var(--chalk-hair);
+  max-height: 26vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.verdict__model { margin: 0; font-size: 0.95rem; color: var(--chalk); }
+
+/* Self-marking row: shown only when nothing graded the answer for you. */
+.verdict__grade { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.verdict__grade .btn { align-self: auto; margin-top: 0; flex: 1; min-width: 96px; padding: 13px 12px; }
+.btn--mark-right { border-color: rgba(143, 214, 160, 0.42); color: var(--right); }
+.btn--mark-part  { border-color: rgba(233, 195, 126, 0.42); color: var(--part); }
+.btn--mark-wrong { border-color: rgba(232, 138, 125, 0.42); color: var(--wrong); }
+
+/* Marking in progress: the sheet is not tappable-through, so say so quietly. */
+.verdict--marking .verdict__card { border-top-style: dotted; }
 
 .verdict__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
 .verdict__actions .btn { align-self: auto; margin-top: 0; }
@@ -631,6 +728,14 @@ body::before {
 }
 .review-note { margin: -2px 0 16px; font-size: 0.85rem; color: var(--chalk-faint); }
 .review-item { margin: 0 0 20px; }
+.review-item__scene {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--chalk-faint);
+  padding-left: 11px;
+  border-left: 2px solid var(--chalk-hair);
+}
 .review-item__q { margin: 0 0 6px; font-size: 1rem; }
 .review-item__n {
   font-size: 0.72rem;

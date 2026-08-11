@@ -46,6 +46,7 @@
         <li><span class="legend__key legend__key--a">←</span> the left-hand answer</li>
         <li><span class="legend__key legend__key--b">→</span> the right-hand answer</li>
         <li><span class="legend__key legend__key--s">↑</span> skip — flags it for review</li>
+        <li><span class="legend__key legend__key--w">✎</span> some cards want it in your own words</li>
       </ul>
 
       <!-- ---- pace ---------------------------------------------------------
@@ -102,22 +103,39 @@
     <!-- Fast mode's stand-in for the verdict sheet on a correct answer. -->
     <div class="flash" id="flash" aria-hidden="true">&#10003;</div>
 
-    <nav class="controls" aria-label="Answer without swiping">
+    <nav class="controls" id="controls" aria-label="Answer without swiping">
       <button class="ctrl ctrl--a"    id="btn-a"    type="button"><span class="ctrl__arrow">←</span><span class="ctrl__label" id="btn-a-text">A</span></button>
       <button class="ctrl ctrl--skip" id="btn-skip" type="button"><span class="ctrl__arrow">↑</span><span class="ctrl__label">Skip</span></button>
       <button class="ctrl ctrl--b"    id="btn-b"    type="button"><span class="ctrl__arrow">→</span><span class="ctrl__label" id="btn-b-text">B</span></button>
     </nav>
 
+    <!-- Written cards have no left/right, so they get their own control row. -->
+    <nav class="controls is-hidden" id="controls-open" aria-label="Answer in your own words">
+      <button class="ctrl ctrl--skip" id="btn-open-skip"   type="button"><span class="ctrl__arrow">↑</span><span class="ctrl__label">Skip</span></button>
+      <button class="ctrl ctrl--send" id="btn-open-submit" type="button"><span class="ctrl__arrow">&#10003;</span><span class="ctrl__label">Submit answer</span></button>
+    </nav>
+
     <!-- Verdict + explanation. Shown after a committed answer in slow mode, and
          after a miss in fast mode. The same sheet doubles as the look-back
-         browser: ◂ / ▸ page through everything already answered. -->
+         browser: ◂ / ▸ page through everything already answered, and as the
+         marking sheet for written answers. -->
     <div class="verdict is-hidden" id="verdict" role="status">
       <div class="verdict__card">
         <p class="verdict__pos is-hidden" id="verdict-pos"></p>
         <p class="verdict__mark" id="verdict-mark"></p>
+        <p class="verdict__said is-hidden" id="verdict-said"></p>
         <p class="verdict__line" id="verdict-line"></p>
+        <p class="verdict__model is-hidden" id="verdict-model"></p>
         <p class="verdict__why" id="verdict-why"></p>
-        <div class="verdict__actions">
+
+        <!-- Self-marking. Shown only when the grader could not be reached. -->
+        <div class="verdict__grade is-hidden" id="verdict-grade">
+          <button class="btn btn--mark btn--mark-right" type="button" data-mark="correct">I had it</button>
+          <button class="btn btn--mark btn--mark-part"  type="button" data-mark="partial">Half</button>
+          <button class="btn btn--mark btn--mark-wrong" type="button" data-mark="incorrect">Missed it</button>
+        </div>
+
+        <div class="verdict__actions" id="verdict-actions">
           <button class="btn btn--icon" id="btn-prev" type="button" aria-label="Previous card">&#8592;</button>
           <button class="btn btn--icon is-hidden" id="btn-fwd" type="button" aria-label="Later card">&#8594;</button>
           <button class="btn btn--primary" id="btn-next" type="button">Next card</button>
@@ -140,6 +158,7 @@
         <div class="scoreline__big" id="sum-accuracy">0%</div>
         <div class="scoreline__meta">
           <span id="sum-correct">0 right</span>
+          <span id="sum-part" class="is-hidden">0 half</span>
           <span id="sum-wrong">0 wrong</span>
           <span id="sum-skipped">0 skipped</span>
         </div>

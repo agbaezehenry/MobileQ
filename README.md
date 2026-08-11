@@ -4,12 +4,16 @@ A swipe-based quiz PWA. One question per card, filling the screen: swipe **left*
 left-hand answer, **right** for the right-hand answer, **up** to skip. Vanilla HTML, CSS
 and JS — no framework, no build step, no npm. Push the files, enable Pages, done.
 
+Some cards are not a swipe at all. [**Written** cards](#written-cards) ask for an answer in
+your own words and have it marked against the reference answer; [**scenarios**](#scenarios)
+are one setup with a chain of follow-ups, each dealt only once you have answered the last.
+
 Cards you miss come back a couple of minutes later and keep coming back until they stick;
 [FSRS-5](#spaced-repetition-fsrs-5) schedules everything else across sessions. **Fast** mode
 only stops you when you get one wrong. The `←` at the top left reopens anything you have
 already answered.
 
-The deck that ships with it is a 154-card drill on **metrics and ML systems**. The metrics
+The deck that ships with it is a 171-card drill on **metrics and ML systems**. The metrics
 half splits into four families:
 
 | Family | What it measures | Examples in the deck |
@@ -61,6 +65,9 @@ right. It sticks between launches.
 | **Slow** | verdict sheet, tap to continue | verdict sheet |
 | **Fast** | a green tick, then the next card ~0.3s later | verdict sheet |
 
+A written card always shows the marking sheet while it waits on the grader; in fast mode a
+**right** mark then flashes the tick and moves on, and a **half** or **wrong** one stops.
+
 Fast mode exists because most of a drill is cards you already know, and reading "Right." on
 each of them is pure tax. It stops you exactly where stopping is worth something.
 
@@ -76,6 +83,55 @@ On a keyboard: backspace to open, arrows to page, escape to resume.
 It is a review, not a second attempt — nothing there changes the score or the schedule. The
 **Ask** button works on any card you page to, which is the intended way to interrogate
 something fast mode skated past.
+
+## Written cards
+
+Some cards have no left and no right. The rails go dark, the card grows a text box, and the
+controls become **Skip** and **Submit answer** — you have to produce the thing rather than
+recognise it, which is the difference between having read about NRR and being able to say
+what 118% means when somebody asks.
+
+What you write is marked against the `answer` the card ships with. The verdict sheet then
+shows your answer, one line of feedback, the model answer, and the usual explanation.
+
+Marks are **right**, **half**, or **wrong**. Half is not a consolation prize: it schedules
+exactly like a miss (back in 2 minutes, and it counts toward the three-miss park), and it is
+excluded from the accuracy figure on the summary — it just grades **Hard** rather than
+**Again** in FSRS, because half-remembering is evidence of a weak memory rather than none.
+
+On a keyboard, `Enter` is a newline and **⌘/Ctrl + Enter** submits.
+
+### The marking call
+
+`claude-haiku-4-5`, one non-streaming call, no thinking. Marking is a comparison, not a
+knowledge question — the reference answer travels with the card, so the model is only
+judging whether the substance matches. That is a small job, and a card that stalled for
+five seconds behind Opus would be worse than no marking at all.
+
+The reply is pinned with [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+to `{verdict, feedback}`, so there is no prose to parse and no way to come back with a mark
+the app cannot read. The prompt tells it to mark on substance: a terser answer than the
+reference is still correct, and nothing is expected that the question did not ask for.
+It lives under the `THE GRADER` banner in `app.js`.
+
+### Without a key
+
+Nothing about the deck depends on the API. With no key stored — or if the call fails, or the
+key is rejected, or you are on a plane — the sheet shows you the model answer and three
+buttons, **I had it / Half / Missed it**, and you mark yourself. The schedule cares about the
+verdict, not about who produced it.
+
+## Scenarios
+
+A scenario is one setup and a chain of follow-ups. The setup rides on every card in the
+chain, the tag line reads `STEP 2 OF 3`, and the steps are dealt back to back — nothing
+jumps the queue mid-chain, because a follow-up asked after an unrelated detour about ROC
+curves is a different and worse question. Steps can be swipe cards or written ones.
+
+Once answered, a step is an ordinary card. It is scheduled under its own id, relearned on
+its own, and when it comes back — two minutes later, or in four days from `Review due` — it
+comes back **alone**, still carrying its setup. Chains are how the material is first taught,
+not a unit that has to be replayed whole forever.
 
 ## Active recall
 
@@ -102,7 +158,8 @@ reps, lapses, last, due}` in `localStorage` under `metric-board.fsrs.v1`, keyed 
 
 Grades come off the swipe. A miss or a skip is **Again**. A correct answer is graded by
 hesitation, since that is the only other signal a two-choice card offers: under 4.5s is
-**Easy**, over 15s is **Hard**, anything between is **Good**.
+**Easy**, over 15s is **Hard**, anything between is **Good**. A written answer marked
+**half** is **Hard**, and still relearned like a miss.
 
 Once a card has a review history, the start screen offers **Review due · N**, which deals
 only the cards whose due date has passed.
@@ -133,7 +190,9 @@ python3 -m http.server 8000
 ```
 
 On desktop the arrow keys work as a stand-in for swiping: `←` `→` `↑`, then space for the
-next card. Backspace opens the look-back; inside it the arrows page and escape resumes.
+next card. Backspace opens the look-back; inside it the arrows page and escape resumes. On a
+written card the keyboard belongs to the text box — arrows move the caret, and ⌘/Ctrl+Enter
+submits.
 
 ---
 
@@ -176,7 +235,10 @@ After the first load the service worker has the whole app cached, so it works on
 
 ## Editing the deck
 
-Everything lives in `questions.js` as one plain array. No app logic in that file.
+Everything lives in `questions.js` as one plain array. No app logic in that file. There are
+three entry shapes, mixed freely in the same array.
+
+**A swipe card:**
 
 ```js
 {
@@ -194,6 +256,53 @@ Everything lives in `questions.js` as one plain array. No app logic in that file
 For `true-false` cards, set `optionA: "False"` and `optionB: "True"` — left is false,
 right is true, which matches the ✗/✓ muscle memory.
 
+**A written card:**
+
+```js
+{
+  id: "wri-001",
+  topic: "offline · classification",
+  type: "open",
+  question: "A fraud model is reported at 99.4% accuracy … why is that close to useless?",
+  answer: "Fraud is a tiny fraction of transactions, so predicting 'not fraud' …",
+  keyPoints: ["the classes are imbalanced", "asks for a positive-class metric"],
+  explanation: "This is the base-rate trap …"
+}
+```
+
+`answer` is what the marking model compares against, so write it the way you would want it
+said back to you. `keyPoints` is optional and acts as the checklist — it is the lever for
+"right idea, but I wanted both halves". Ask for a specific amount (*in a sentence*, *name
+two*): an open-ended prompt gets marked against an answer that had a shape in mind.
+
+**A scenario:**
+
+```js
+{
+  id: "scn-001",
+  topic: "monitoring · drift",
+  type: "scenario",
+  scenario: "A recommender loses 8% of its click-through rate overnight. Nothing shipped.",
+  steps: [
+    { question: "Where do you look first?",
+      optionA: "Offline metrics on the frozen test set",
+      optionB: "The features being served to live traffic",
+      correct: "B", explanation: "…" },
+    { type: "open", question: "What do you add so the next one is caught sooner?",
+      answer: "…", keyPoints: ["…"], explanation: "…" }
+  ]
+}
+```
+
+Steps take the same fields as the two shapes above, minus `topic` (inherited) and `id`
+(defaults to `scn-001.1`, `scn-001.2`, …). Those generated ids are what FSRS schedules
+under, so **renumbering or reordering steps loses their review history** — give a step an
+explicit `id` if you expect to move it later.
+
+Keep `scenario` to two or three sentences. It is repeated on every step and the card does
+not scroll: the stage owns the touch gesture, so a scroll region inside a card would not
+answer to a finger. Long stems are clamped at six lines.
+
 Two things worth keeping up as you add cards: vary which side is correct (the current deck
 is 52 A / 62 B, so you can't swipe one direction and coast), and keep option labels short
 enough to read on the card edge and in the tap buttons.
@@ -208,8 +317,13 @@ one you picked, the right answer and the explanation are already loaded as the s
 prompt — so the first thing you say can be "why?" rather than a restatement of the card.
 The thread resets with each new card.
 
+The chat also gets the context of a written card: what you wrote and how it was marked, so
+"was I close, or thinking about it wrong?" is a question it can actually answer — including
+by disagreeing with the mark if you make a fair case.
+
 ### It needs your own API key
 
+The same key does both jobs: chatting about a card, and [marking written answers](#the-marking-call).
 This is a static site with no backend, so there is nowhere to hide a server-side secret.
 
 It is asked for **at the top of a run**, before the first card, rather than the first time
@@ -243,7 +357,8 @@ bubble. Browser calls are opted into CORS with the `anthropic-dangerous-direct-b
 header. All of it lives under the `ASK —` banner in `app.js`, behind one `askStream()`
 function — swap that one function to move to a proxy.
 
-Offline, the deck still works; Ask just reports that it can't reach the API.
+Offline, the deck still works: Ask reports that it can't reach the API, and written cards
+[fall back to self-marking](#without-a-key).
 
 ---
 
@@ -276,6 +391,10 @@ Only `transform` and `opacity` animate. `prefers-reduced-motion` is respected.
   review-log corpus. Your own review history is being written to `localStorage` already, so
   running it through the FSRS optimiser and pasting the resulting 19 numbers over `W` would
   personalise the schedule. Not worth it until a few hundred reviews have accumulated.
+- **Branching scenarios.** Chains are linear: every step follows the last regardless of what
+  you answered. Branching on the answer — "you said stale features, so what would you check
+  next?" — would mean a `next` map per option and a queue that can walk it, and would need a
+  story for what a branch that was never taken means to the scheduler.
 - **Confidence tap.** A low/med/high tap before committing, stored alongside the result, so
   the summary can show a calibration curve and a Brier score — which would make the app an
   instance of one of its own questions.

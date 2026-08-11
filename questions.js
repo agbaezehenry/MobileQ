@@ -4,8 +4,10 @@
    This file has NO app logic in it. Edit freely: add, delete, or reorder
    objects in the QUESTIONS array and the app picks up the changes on reload.
 
-   Schema
-   ------
+   Schema — three shapes, all in the same array
+   --------------------------------------------
+
+   1. A swipe card.
    {
      id:          "unique-string",          // used for the missed/skipped list
      topic:       "free text label",        // shown as a chalk tag on the card
@@ -15,6 +17,34 @@
      optionB:     "Right-swipe label",      // true-false → "True"
      correct:     "A" | "B",
      explanation: "Why that's the answer. Shown after you commit."
+   }
+
+   2. A written card. You type an answer and it is marked against `answer` by a
+      small model — on substance, not wording. Without an API key the app shows
+      the model answer and you mark yourself.
+   {
+     id:          "unique-string",
+     topic:       "free text label",
+     type:        "open",
+     question:    "The prompt. Say how much you want — 'in a sentence', 'name two'.",
+     answer:      "The reference answer. Written as you'd want it said back.",
+     keyPoints:   ["must be mentioned", "…"],   // optional; the marking checklist
+     explanation: "The fuller note. Shown after marking, like any other card."
+   }
+
+   3. A scenario: one setup, then a chain of follow-ups dealt back to back.
+      Steps are `two-choice`, `true-false` or `open` cards — the same fields as
+      above, minus `topic` (inherited) and `id` (defaults to "scn-001.1").
+      Once answered, a step is an ordinary card: it is scheduled under its own
+      id and comes back alone, still carrying the setup text. Keep `scenario`
+      to two or three sentences — the card does not scroll.
+   {
+     id:          "unique-string",
+     topic:       "free text label",
+     type:        "scenario",
+     scenario:    "The setup, repeated on every step of the chain.",
+     steps:       [ { question, optionA, optionB, correct, explanation },
+                    { type: "open", question, answer, keyPoints, explanation } ]
    }
 
    Deck theme: metrics, plus the systems they get measured on. Four metric families —
@@ -1631,6 +1661,213 @@ const QUESTIONS = [
     optionB: "Concept drift",
     correct: "B",
     explanation: "Input and prediction distributions are observable the moment traffic lands. Concept drift is a change in P(y|x) — the relationship itself — and you cannot see that the mapping moved until you learn what actually happened."
+  },
+
+  /* ---------------------------------------------------------------------------
+     WRITTEN — answered in your own words, marked against the reference answer.
+
+     These exist because recognising the right option and being able to say the
+     thing are different skills, and only one of them survives contact with a
+     design review. Ask for a specific amount ("in a sentence", "name two") —
+     an open-ended prompt is marked against an answer that had a shape in mind.
+     ------------------------------------------------------------------------ */
+  {
+    id: "wri-001",
+    topic: "offline · classification",
+    type: "open",
+    question: "A fraud model is reported at 99.4% accuracy on last month's traffic. In a sentence: why is that number close to useless, and what would you ask for instead?",
+    answer: "Fraud is a tiny fraction of transactions, so predicting 'not fraud' every time scores about the same. Ask for precision and recall on the fraud class — or PR-AUC — because only the positive class carries any information.",
+    keyPoints: [
+      "the classes are heavily imbalanced, so accuracy is dominated by the majority class",
+      "asks for a positive-class metric: precision, recall, F1 or PR-AUC"
+    ],
+    explanation: "This is the base-rate trap. At 0.6% fraud, the all-negative model scores 99.4% and catches nothing. Any metric that averages over both classes will be swamped by the majority; the ones worth reporting condition on the class you actually care about."
+  },
+  {
+    id: "wri-002",
+    topic: "taxonomy",
+    type: "open",
+    question: "A model wins on every offline metric and still loses the A/B test. Name two mechanisms that produce that.",
+    answer: "The held-out set no longer matches live traffic, so offline gains do not transfer. The offline metric is a proxy that has come apart from the business metric — better ranking that surfaces less profitable items, say. The training labels came from the old model's own exposure, so the gain is partly logging artefact. Or the new model is slower, and the latency costs more than the quality wins.",
+    keyPoints: [
+      "two distinct mechanisms, not one restated",
+      "each one explains a gap between the offline measurement and live outcomes"
+    ],
+    explanation: "Offline metrics are cheap, repeatable proxies measured on a frozen snapshot. Every one of these failures is the same shape: something true of the snapshot is not true of live traffic. That is why the A/B test is the arbiter and the offline suite is the filter."
+  },
+  {
+    id: "wri-003",
+    topic: "online · experiments",
+    type: "open",
+    question: "What is sample ratio mismatch, and why does seeing one stop you reading the rest of the results?",
+    answer: "The observed split between arms differs from the designed split by more than chance would explain — 50/50 comes out 52/48 on a million users. It means assignment or logging is broken, so the two groups are no longer comparable, and any lift you read could be that bug rather than the treatment.",
+    keyPoints: [
+      "the realised allocation differs from the designed one beyond chance",
+      "randomisation or logging is broken, so the groups are not comparable"
+    ],
+    explanation: "SRM is the smoke alarm of experimentation. The whole inference rests on the two arms differing only in the treatment; a mismatch is direct evidence that something else differs too. Common causes: a redirect that drops users, arm-specific errors, bot filtering applied after assignment."
+  },
+  {
+    id: "wri-004",
+    topic: "business",
+    type: "open",
+    question: "A SaaS business reports net revenue retention of 118%. Say what that means and what it implies about growth.",
+    answer: "The cohort of customers they already had a year ago is now paying 18% more, after churn and downgrades are subtracted from upgrades and expansion. Revenue grows even if they sell to nobody new, so new sales compound on a base that is itself rising.",
+    keyPoints: [
+      "expansion from existing customers exceeds churn and contraction",
+      "the existing base grows without any new acquisition"
+    ],
+    explanation: "NRR above 100% is the one number that separates a durable subscription business from a leaky one. Below 100% you are running to stand still: acquisition has to refill the bucket before it can grow. It is also why NRR gets read alongside CAC payback — cheap growth is expansion, not acquisition."
+  },
+  {
+    id: "wri-005",
+    topic: "training",
+    type: "open",
+    question: "Training loss is still falling; validation loss has risen for three epochs. Name what you are looking at and one thing you would do about it.",
+    answer: "Overfitting — the model is now memorising the training set rather than learning anything that transfers. Stop at the validation minimum (early stopping and keep that checkpoint), or add regularisation, augmentation or data, or cut model capacity.",
+    keyPoints: [
+      "identifies overfitting from the diverging train/val gap",
+      "one concrete remedy: early stopping, regularisation, more data, or less capacity"
+    ],
+    explanation: "The gap between the two curves is the quantity of interest, not either curve alone. A rising validation loss with falling training loss is the textbook signature; the checkpoint you want is the one at the validation minimum, not the one at the end of the run."
+  },
+  {
+    id: "wri-006",
+    topic: "monitoring · drift",
+    type: "open",
+    question: "Input distributions look identical to training, but accuracy has fallen. Which kind of drift is that, and how would you confirm it?",
+    answer: "Concept drift: P(y|x) has moved, so the same inputs now imply different outcomes. Confirming it needs labels — score a freshly labelled sample from the current period and compare against the same model's performance on older labelled data.",
+    keyPoints: [
+      "concept drift — the input-to-label relationship changed, not the inputs",
+      "confirmation requires ground-truth labels from the current period"
+    ],
+    explanation: "Covariate shift is visible the moment traffic lands, because inputs are observable. Concept drift is invisible until the world tells you what actually happened, which is exactly why label latency is a monitoring problem and not just a training one."
+  },
+  {
+    id: "wri-007",
+    topic: "offline · calibration",
+    type: "open",
+    question: "In a sentence or two: what does it mean for a model to be well calibrated, and when would you care about that more than about AUC?",
+    answer: "Among the cases it scores at 0.3, close to 30% actually happen — the numbers mean what they say. It matters more than AUC whenever the probability itself feeds a decision: expected-value thresholds, pricing, triage, anything where you multiply by a cost.",
+    keyPoints: [
+      "predicted probabilities match observed frequencies",
+      "matters when the probability is consumed as a number, not just as a ranking"
+    ],
+    explanation: "AUC only knows about order. A model that outputs every probability at half its true value can have a perfect AUC and be useless for deciding anything — the ranking survives the distortion, the arithmetic does not."
+  },
+  {
+    id: "wri-008",
+    topic: "systems · architecture",
+    type: "open",
+    question: "Why does two-tower retrieval keep the user and item towers separate instead of running one cross-encoder over each pair?",
+    answer: "Separate towers mean the item embeddings can be computed in advance and put in an ANN index, and the user tower runs once per request — so scoring millions of items is a nearest-neighbour lookup. A cross-encoder has to see both sides together, which is one forward pass per candidate. It gets used to rerank the few hundred that retrieval returns.",
+    keyPoints: [
+      "item embeddings are precomputed and indexed; the user side runs once per request",
+      "a cross-encoder cannot be precomputed, so it does not scale to the full catalogue"
+    ],
+    explanation: "This is the retrieval/ranking split in one sentence of architecture. Two towers buy sublinear search at the cost of never letting the two sides interact before the dot product; the cross-encoder buys that interaction back at a price you can only pay on a shortlist."
+  },
+
+  /* ---------------------------------------------------------------------------
+     SCENARIOS — one setup, then follow-ups that only make sense after the last
+     answer. This is where the deck stops testing definitions and starts testing
+     whether you can carry a diagnosis forward.
+     ------------------------------------------------------------------------ */
+  {
+    id: "scn-001",
+    topic: "monitoring · drift",
+    type: "scenario",
+    scenario: "A recommender that has been stable for months loses 8% of its click-through rate overnight. No model, code or config shipped, and the drop is the same on every device and in every country.",
+    steps: [
+      {
+        question: "Where do you look first?",
+        optionA: "Offline metrics on the frozen test set",
+        optionB: "The features being served to live traffic",
+        correct: "B",
+        explanation: "The frozen test set cannot have changed — that is what frozen means, and re-running it tells you about a model nobody touched. An overnight, uniform, deploy-free drop points at an input that moved, and the inputs live in the serving path."
+      },
+      {
+        question: "The job that writes the user-history feature failed at midnight, and the online store has been serving yesterday's values ever since. What is that, precisely?",
+        optionA: "Training–serving skew",
+        optionB: "Concept drift",
+        correct: "A",
+        explanation: "The model is being fed something different in production from what it was trained on — stale values where fresh ones were assumed. The world has not changed and neither has P(y|x); the pipeline has. Skew is a defect, drift is a fact of life, and they get fixed by different teams."
+      },
+      {
+        type: "open",
+        question: "The pipeline is repaired and CTR recovers. What do you add so that the next silent feature failure is caught before users are?",
+        answer: "Monitor the features themselves, not just the model: alert on staleness — the age of the newest row in the online store, per feature — plus null rate and a distribution check against the training reference. Freshness is the one that catches this, because a stale feature is perfectly well-formed.",
+        keyPoints: [
+          "monitoring on the features/pipeline rather than only on model or business metrics",
+          "feature freshness or staleness specifically, since the values stayed valid"
+        ],
+        explanation: "CTR did notice, eventually, and that is the problem — a business metric is a lagging, noisy, low-resolution alarm for a plumbing failure. Staleness is the direct signal: it fires at 00:05, names the feature, and does not need a week of traffic to reach significance."
+      }
+    ]
+  },
+  {
+    id: "scn-002",
+    topic: "online · experiments",
+    type: "scenario",
+    scenario: "A checkout redesign shows a 12% lift in conversion after four days of testing. It is the biggest win the team has had all year, and they want to ship it on Monday.",
+    steps: [
+      {
+        question: "What do you check before you believe the number at all?",
+        optionA: "Whether the arms are split the way the design says",
+        optionB: "Whether the lift beats last quarter's best test",
+        correct: "A",
+        explanation: "A sample ratio mismatch invalidates everything downstream of it, so it is the first check and a hard stop. Comparing the lift against other experiments is a story about your team, not evidence about this treatment."
+      },
+      {
+        question: "The split is clean. The test ran Thursday to Sunday. What specifically is wrong with that window?",
+        optionA: "It is not a whole number of weeks, so the arms are being read on an unrepresentative mix of days",
+        optionB: "Four days is never enough to compute a p-value",
+        correct: "A",
+        explanation: "Checkout behaviour has a strong weekly shape — weekend traffic converts differently from Tuesday's. Both arms see the same days, so this is not bias between arms; it is a lift measured on a slice of the week and quietly generalised to all of it. You can compute a p-value on four days; it just answers a narrower question than the one being asked."
+      },
+      {
+        type: "open",
+        question: "It holds over two full weeks and you ship it. What do you keep running afterwards, and why?",
+        answer: "A long-term holdout: a small slice of traffic that never gets the new checkout, left running for months. Short experiments cannot see novelty wearing off, users learning the new flow, or the win being taken from some other surface rather than created — the holdout measures the change against a real counterfactual long after the test ended.",
+        keyPoints: [
+          "a long-term holdout or reserved control group kept after launch",
+          "a reason a two-week result can decay: novelty, learning effects, or cannibalisation"
+        ],
+        explanation: "Two weeks measures the launch, not the change. Effects that decay and effects that are stolen from elsewhere both look identical to a win at short horizons, and the only instrument that separates them is a control group that outlives the experiment."
+      }
+    ]
+  },
+  {
+    id: "scn-003",
+    topic: "business · decisions",
+    type: "scenario",
+    scenario: "Your fraud model scores every transaction. Blocking a fraudulent one saves the average chargeback of $180. Blocking a legitimate one costs you a customer whose remaining lifetime value averages $400.",
+    steps: [
+      {
+        type: "open",
+        question: "You have a well-calibrated probability p that a transaction is fraud. Write the rule that decides whether to block it.",
+        answer: "Block when the expected saving beats the expected cost: 180·p > 400·(1 − p), which solves to p > 400/580 ≈ 0.69. The cut-off comes out of the two costs, not out of the habit of using 0.5.",
+        keyPoints: [
+          "weighs the two errors by their costs rather than thresholding at 0.5",
+          "arrives at a threshold near 0.69 (or the equivalent inequality)"
+        ],
+        explanation: "A classifier's default 0.5 is an assumption that the two mistakes cost the same, which they almost never do. Here a false positive is more than twice as expensive as a false negative is, so the bar for blocking has to sit well above half."
+      },
+      {
+        question: "Which offline metric tells you whether that rule can work at all?",
+        optionA: "Calibration — say, ECE or a reliability curve",
+        optionB: "ROC-AUC",
+        correct: "A",
+        explanation: "The rule consumes p as a number and multiplies it by dollars. AUC would be satisfied by any monotone distortion of those probabilities — perfect ranking, arithmetic that lies. Calibration is the property the threshold is standing on."
+      },
+      {
+        question: "Six months on, chargebacks average $95 while lifetime value is unchanged. What has to move?",
+        optionA: "The threshold",
+        optionB: "The model's weights",
+        correct: "A",
+        explanation: "The model's probabilities are still correct — nothing about predicting fraud changed. What moved is the economics, so the cut-off moves with them: p > 400/495 ≈ 0.81, and you now block considerably less. Retraining here would be answering a question nobody asked."
+      }
+    ]
   }
 
 ];
