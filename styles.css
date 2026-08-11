@@ -114,6 +114,9 @@ body::before {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+/* The start screen carries the pace picker as well as the title, so it can
+   outgrow a short phone. Give it a little air at the top instead of centring. */
+.screen__inner--start { padding-top: calc(var(--safe-t) + 26px); gap: 16px; }
 
 /* ---- type --------------------------------------------------------------- */
 .display {
@@ -180,11 +183,65 @@ body::before {
 .btn:active { transform: scale(0.97); }
 .btn:hover  { border-color: var(--chalk-soft); }
 .btn--primary { background: rgba(243,240,230,0.10); border-color: var(--chalk-soft); }
+.btn--due     { border-color: rgba(143, 214, 160, 0.42); color: var(--right); }
+.btn--due:hover { border-color: var(--right); }
+.btn[disabled] { opacity: 0.3; cursor: default; transform: none; }
+
+/* Square-ish variant for the ◂ ▸ pager on the verdict sheet. */
+.btn--icon {
+  flex: 0 0 auto;
+  min-width: 54px;
+  padding: 12px;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  color: var(--chalk-soft);
+}
+
+/* An inline text button that reads as a link rather than a control. */
+.linkish {
+  appearance: none; background: none; border: none; padding: 0;
+  font: inherit; font-size: inherit;
+  color: var(--chalk-soft);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
 
 :focus-visible {
   outline: 2px dashed var(--tint-b);
   outline-offset: 3px;
 }
+
+/* ---- pace picker (start screen) -----------------------------------------
+   Slow reads every verdict. Fast only stops you on a miss, which is the whole
+   point: the cards you already know should cost a swipe and nothing more. */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.mode {
+  appearance: none; font: inherit; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  text-align: left;
+  padding: 13px 14px;
+  color: var(--chalk-soft);
+  background: rgba(243,240,230,0.035);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 15px 13px 16px 14px;
+  transition: transform 0.12s ease, background 0.18s ease, border-color 0.2s ease;
+}
+.mode:active { transform: scale(0.98); }
+.mode b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--chalk);
+}
+.mode span { font-size: 0.76rem; line-height: 1.3; color: rgba(243, 240, 230, 0.45); }
+.mode.is-on {
+  background: rgba(243,240,230,0.10);
+  border-color: var(--chalk-soft);
+}
+.mode.is-on b    { color: var(--tint-b); }
+.mode.is-on span { color: var(--chalk-soft); }
 
 /* ---- top bar ------------------------------------------------------------ */
 .topbar {
@@ -209,14 +266,55 @@ body::before {
   transition: width 0.35s ease;
 }
 .topbar__row {
-  display: flex; justify-content: space-between; align-items: baseline;
+  display: flex; align-items: center; gap: 9px;
   margin-top: 8px;
-  font-size: 0.8rem;
-  letter-spacing: 0.12em;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--chalk-faint);
 }
-.tally { color: var(--chalk-soft); }
+.topbar__gap { flex: 1; }
+.tally { color: var(--chalk-soft); white-space: nowrap; }
+.counter { white-space: nowrap; }
+
+/* Cards queued to come back. Appears only once something is waiting. */
+.recall {
+  color: var(--tint-skip);
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+}
+
+/* Look-back. Sits left of the counter so the thumb finds it without covering
+   the card, and greys out until there is something behind you. */
+.iconbtn {
+  appearance: none; font: inherit; cursor: pointer;
+  flex: 0 0 30px; width: 30px; height: 30px;
+  display: grid; place-items: center;
+  font-size: 0.95rem; line-height: 1;
+  color: var(--chalk-soft);
+  background: transparent;
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 50% 46% 52% 48%;
+  transition: transform 0.12s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+.iconbtn:active     { transform: scale(0.92); }
+.iconbtn[disabled]  { opacity: 0.25; cursor: default; }
+
+/* Pace toggle, mid-run. Shows the mode you are in; tap to swap. */
+.pill {
+  appearance: none; font: inherit; cursor: pointer;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 5px 11px;
+  color: var(--chalk-soft);
+  background: transparent;
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 12px 10px 13px 11px;
+  transition: transform 0.12s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.pill:active     { transform: scale(0.94); }
+.pill--fast      { color: var(--tint-b); border-color: rgba(233,195,126,0.45); }
 
 /* ---- chalk rails (the signature element) --------------------------------
    The two answers are written down the board edges. They brighten as the card
@@ -377,6 +475,32 @@ body::before {
   overflow: hidden;
 }
 
+/* ---- fast-mode tick -----------------------------------------------------
+   In fast mode a correct answer never raises the verdict sheet, so this is the
+   only acknowledgement you get. It has to read at a glance and be gone before
+   the next card lands — hence 0.5s, no layout, no interaction. */
+.flash {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  font-family: var(--font-display);
+  font-size: clamp(6rem, 34vw, 11rem);
+  line-height: 1;
+  color: var(--right);
+  text-shadow: 0 0 34px rgba(143, 214, 160, 0.35);
+}
+.flash.is-on { animation: tick 0.5s ease-out both; }
+@keyframes tick {
+  0%   { opacity: 0;    transform: scale(0.7)  rotate(-8deg); }
+  22%  { opacity: 0.92; transform: scale(1.04) rotate(-4deg); }
+  55%  { opacity: 0.82; transform: scale(1)    rotate(-4deg); }
+  100% { opacity: 0;    transform: scale(1.12) rotate(-4deg); }
+}
+
 /* ---- verdict ------------------------------------------------------------ */
 .verdict {
   position: fixed;
@@ -422,8 +546,67 @@ body::before {
 .btn--ask { border-color: rgba(233, 195, 126, 0.42); color: var(--tint-b); }
 .btn--ask:hover { border-color: var(--tint-b); }
 
+/* Look-back mode. Same sheet, but nothing here changes the score, so it is
+   marked with a dashed edge and its position in the run. */
+.verdict__pos {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--chalk-faint);
+}
+.verdict--history .verdict__card {
+  border-top-style: dashed;
+  border-top-color: var(--chalk-faint);
+}
+
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise    { from { transform: translate3d(0,100%,0); } to { transform: translate3d(0,0,0); } }
+
+/* ---- key gate -----------------------------------------------------------
+   Shown once at the top of a run, before the first card. Centred rather than
+   bottom-sheeted, because it is a decision about the session, not about a
+   card that is on screen behind it. */
+.gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--safe-t) + 18px) calc(var(--safe-r) + 18px)
+           calc(var(--safe-b) + 18px) calc(var(--safe-l) + 18px);
+  background: rgba(10,14,15,0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: fade-in 0.16s ease both;
+  overflow-y: auto;
+}
+.gate__card {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  background: var(--board-deep);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 24px 21px 25px 22px;
+  padding: 26px 24px 22px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+}
+.gate__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.85rem;
+  line-height: 1.05;
+}
+.gate__line  { margin: 0; font-size: 0.95rem; color: var(--chalk-soft); }
+.gate__line b { color: var(--tint-b); font-weight: 400; }
+.gate__note  { margin: 0; font-size: 0.78rem; color: var(--chalk-faint); }
+.gate__input { width: 100%; }
+.gate .btn-row { margin-top: 2px; }
+.gate .footnote:empty { display: none; }
 
 /* ---- summary ------------------------------------------------------------ */
 .scoreline { margin: 6px 0 2px; }
@@ -446,14 +629,23 @@ body::before {
   border-top: 1px solid var(--chalk-hair);
   padding-top: 18px;
 }
+.review-note { margin: -2px 0 16px; font-size: 0.85rem; color: var(--chalk-faint); }
 .review-item { margin: 0 0 20px; }
 .review-item__q { margin: 0 0 6px; font-size: 1rem; }
+.review-item__n {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--wrong);
+  white-space: nowrap;
+}
 .review-item__a { margin: 0 0 4px; font-size: 0.9rem; }
 .review-item__a b { font-weight: 600; }
 .review-item--wrong .review-item__a b { color: var(--wrong); }
 .review-item--skip  .review-item__a b { color: var(--tint-skip); }
 .review-item__why { margin: 0; font-size: 0.9rem; color: var(--chalk-soft); }
 .review-empty { color: var(--chalk-soft); }
+.sum-reset { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--chalk-hair); }
 
 /* ---- ask panel ----------------------------------------------------------
    A near-full-height sheet over the verdict. --kb is set from JS off

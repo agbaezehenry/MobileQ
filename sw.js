@@ -9,13 +9,14 @@
        phones that already installed the app will keep serving the old copy.
    ============================================================================= */
 
-const CACHE_VERSION = 'metric-board-v3';
+const CACHE_VERSION = 'metric-board-v4';
 
 const SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './fsrs.js',
   './questions.js',
   './manifest.json',
   './icons/icon-192.png',

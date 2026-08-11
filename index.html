@@ -34,7 +34,7 @@
   <!-- START SCREEN                                                           -->
   <!-- ====================================================================== -->
   <section class="screen screen--start" id="screen-start">
-    <div class="screen__inner">
+    <div class="screen__inner screen__inner--scroll screen__inner--start">
       <p class="eyebrow">a drill in four families</p>
       <h1 class="display">Metric<br />Board</h1>
       <p class="lede">
@@ -48,11 +48,29 @@
         <li><span class="legend__key legend__key--s">↑</span> skip — flags it for review</li>
       </ul>
 
+      <!-- ---- pace ---------------------------------------------------------
+           Slow stops on every card. Fast only stops when you were wrong, and
+           lets the right ones fly past. -->
+      <div class="modes" role="radiogroup" aria-label="Pace">
+        <button class="mode" id="mode-slow" type="button" role="radio" aria-checked="true">
+          <b>Slow</b><span>read the verdict on every card</span>
+        </button>
+        <button class="mode" id="mode-fast" type="button" role="radio" aria-checked="false">
+          <b>Fast</b><span>fly through, stop only on a miss</span>
+        </button>
+      </div>
+
       <div class="btn-row">
         <button class="btn btn--primary" id="btn-start">Start the deck</button>
         <button class="btn" id="btn-start-shuffle">Shuffle first</button>
+        <button class="btn btn--due is-hidden" id="btn-start-due">Review due</button>
       </div>
+
       <p class="footnote" id="deck-count"></p>
+      <p class="footnote">
+        <span id="key-state"></span>
+        <button class="linkish" id="btn-key-open" type="button">add one</button>
+      </p>
     </div>
   </section>
 
@@ -64,8 +82,12 @@
     <header class="topbar">
       <div class="progress" aria-hidden="true"><i id="progress-fill"></i></div>
       <div class="topbar__row">
+        <button class="iconbtn" id="btn-back" type="button" aria-label="Look back at the last card" disabled>&#8592;</button>
         <span class="counter" id="counter">1 / 1</span>
-        <span class="tally" id="tally">0 right</span>
+        <span class="topbar__gap"></span>
+        <span class="recall is-hidden" id="recall-badge" title="cards waiting to come back">&#8634;&nbsp;0</span>
+        <span class="tally" id="tally">0 &#10003;</span>
+        <button class="pill" id="btn-mode" type="button" aria-label="Switch pace">slow</button>
       </div>
     </header>
 
@@ -77,23 +99,31 @@
     <!-- Cards are injected here. Only the top one is interactive. -->
     <main class="stage" id="stage" aria-live="polite"></main>
 
+    <!-- Fast mode's stand-in for the verdict sheet on a correct answer. -->
+    <div class="flash" id="flash" aria-hidden="true">&#10003;</div>
+
     <nav class="controls" aria-label="Answer without swiping">
       <button class="ctrl ctrl--a"    id="btn-a"    type="button"><span class="ctrl__arrow">←</span><span class="ctrl__label" id="btn-a-text">A</span></button>
       <button class="ctrl ctrl--skip" id="btn-skip" type="button"><span class="ctrl__arrow">↑</span><span class="ctrl__label">Skip</span></button>
       <button class="ctrl ctrl--b"    id="btn-b"    type="button"><span class="ctrl__arrow">→</span><span class="ctrl__label" id="btn-b-text">B</span></button>
     </nav>
 
-    <!-- Verdict + explanation. Shown after every committed answer. -->
+    <!-- Verdict + explanation. Shown after a committed answer in slow mode, and
+         after a miss in fast mode. The same sheet doubles as the look-back
+         browser: ◂ / ▸ page through everything already answered. -->
     <div class="verdict is-hidden" id="verdict" role="status">
       <div class="verdict__card">
+        <p class="verdict__pos is-hidden" id="verdict-pos"></p>
         <p class="verdict__mark" id="verdict-mark"></p>
         <p class="verdict__line" id="verdict-line"></p>
         <p class="verdict__why" id="verdict-why"></p>
         <div class="verdict__actions">
+          <button class="btn btn--icon" id="btn-prev" type="button" aria-label="Previous card">&#8592;</button>
+          <button class="btn btn--icon is-hidden" id="btn-fwd" type="button" aria-label="Later card">&#8594;</button>
           <button class="btn btn--primary" id="btn-next" type="button">Next card</button>
           <button class="btn btn--ask" id="btn-ask" type="button">Ask</button>
         </div>
-        <p class="footnote">tap anywhere, or press space</p>
+        <p class="footnote" id="verdict-foot">tap anywhere, or press space</p>
       </div>
     </div>
   </section>
@@ -114,6 +144,7 @@
           <span id="sum-skipped">0 skipped</span>
         </div>
       </div>
+      <p class="footnote" id="sum-sched"></p>
 
       <div class="btn-row">
         <button class="btn btn--primary" id="btn-restart">Run it again</button>
@@ -121,8 +152,41 @@
       </div>
 
       <div id="review-block"></div>
+
+      <p class="footnote sum-reset">
+        <button class="linkish" id="btn-forget-memory" type="button">Clear the spaced-repetition memory</button>
+      </p>
     </div>
   </section>
+
+  <!-- ====================================================================== -->
+  <!-- KEY GATE                                                               -->
+  <!-- Asked once at the top of a run, before the first card, because that is  -->
+  <!-- the only moment you are not mid-thought about a question. Skippable —   -->
+  <!-- the deck works fine without a key, only Ask needs one.                  -->
+  <!-- ====================================================================== -->
+  <div class="gate is-hidden" id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+    <div class="gate__card">
+      <p class="eyebrow" id="gate-eyebrow">before you start</p>
+      <h2 class="gate__title" id="gate-title">Anthropic API key</h2>
+      <p class="gate__line">
+        Every card has an <b>Ask</b> button that opens a chat with Claude about that
+        card. It needs your own key. It is stored in this browser only and is sent
+        nowhere but api.anthropic.com.
+      </p>
+      <input class="ask__input gate__input" id="gate-input" type="password"
+             placeholder="sk-ant-&hellip;" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" />
+      <p class="gate__note">Create one at console.anthropic.com &rarr; API keys. Usage bills to that account.</p>
+      <div class="btn-row">
+        <button class="btn btn--primary" id="btn-gate-save" type="button">Save &amp; start</button>
+        <button class="btn" id="btn-gate-skip" type="button">Start without it</button>
+      </div>
+      <p class="footnote">
+        <button class="linkish is-hidden" id="btn-gate-forget" type="button">Forget the stored key</button>
+      </p>
+    </div>
+  </div>
 
   <!-- ====================================================================== -->
   <!-- ASK PANEL                                                              -->
@@ -161,14 +225,16 @@
 
       <p class="ask__foot">
         <span id="ask-foot-note"></span>
-        <button class="ask__link is-hidden" id="btn-key-forget" type="button">Forget key</button>
+        <button class="ask__link" id="btn-key-forget" type="button">Forget key</button>
       </p>
 
     </div>
   </div>
 
-  <!-- questions.js first: app.js reads window.QUESTIONS at boot. -->
+  <!-- questions.js first: app.js reads window.QUESTIONS at boot.
+       fsrs.js next: app.js reads window.FSRS at boot too. -->
   <script src="./questions.js"></script>
+  <script src="./fsrs.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

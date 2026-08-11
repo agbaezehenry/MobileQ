@@ -20,6 +20,23 @@
   var FLICK_SPEED = 0.55; // px/ms — a fast throw commits below the distance threshold
   var ROTATE_MAX  = 14;   // degrees of tilt at full drag
 
+  /* Relearning steps, in minutes. A card you miss comes back after the first
+     step; get it right and it moves to the second; get it right there and it
+     graduates to FSRS's long-term schedule. Miss it again at any point and it
+     drops back to the first step. This is the active-recall loop, and it is
+     deliberately in front of FSRS rather than part of it — see fsrs.js. */
+  var RELEARN_STEPS = [2, 10];
+
+  /* A card you keep missing stops resurfacing after this many misses in one
+     sitting. Without it a card you simply do not know yet can trap the queue. */
+  var MAX_SESSION_MISSES = 3;
+
+  /* Fast mode holds the correct card on screen just long enough for it to fly
+     off and the tick to register, then deals the next one. */
+  var FAST_ADVANCE_MS = 300;
+
+  var MODE_LS = 'metric-board.mode';
+
   /* ---- element handles -------------------------------------------------- */
   var $ = function (id) { return document.getElementById(id); };
 
@@ -33,13 +50,31 @@
   var railAText  = $('rail-a-text'), railBText = $('rail-b-text');
   var btnAText   = $('btn-a-text'),  btnBText = $('btn-b-text');
   var verdict    = $('verdict');
+  var flash      = $('flash');
+  var backBtn    = $('btn-back');
 
   /* ---- state ------------------------------------------------------------ */
-  var deck    = [];   // the working, possibly shuffled, question list
-  var index   = 0;    // pointer into deck
-  var results = [];   // { id, verdict: 'right'|'wrong'|'skip', chose: 'A'|'B'|null }
+  /* The deck is no longer a flat list with a cursor. Two queues feed the stage:
+     `main` is fresh material in deck order, `pending` is cards waiting to come
+     back round. Whichever is ripe wins — see chooseNext(). */
+  var main    = [];   // questions not yet seen this session
+  var pending = [];   // [{ q, dueAt }] — missed cards, waiting out their step
+  var current = null; // the question on screen
+  var shownAt = 0;    // when it went up, for grading by hesitation
+  var repeat  = false;// the card on screen came back round rather than being new
+  var lastServed = null;
+
+  var sess    = {};   // per-card session state, by id: { misses, step, parked }
+  var history = [];   // [{ q, v, choice, ms, due }] — every card committed, in order
+  var done    = 0;
+
+  var histPos     = null;  // index into history while looking back; null when live
+  var liveVerdict = null;  // the sheet's live contents, parked while looking back
+  var pendingAdvance = false;
+
+  var mode    = 'slow';
   var topCard = null; // DOM node of the interactive card
-  var locked  = false;// true while a card is flying off or the verdict is up
+  var locked  = false;// true while a card is flying off or a sheet is up
 
   /* ---- helpers ---------------------------------------------------------- */
   function show(name) {
@@ -97,47 +132,65 @@
   function renderStack() {
     stage.innerHTML = '';
     topCard = null;
+    if (!current) return;
 
-    if (index >= deck.length) { finish(); return; }
-
-    var behind = deck[index + 1];
+    var behind = peekNext();
     if (behind) {
       var b = buildCard(behind);
       b.classList.add('card--behind');
       stage.appendChild(b);
     }
 
-    var q = deck[index];
-    topCard = buildCard(q);
-    topCard.classList.add('card--top', 'card--animate');
-    stage.appendChild(topCard);
+    var card = buildCard(current);
+    topCard = card;
+    card.classList.add('card--top', 'card--animate');
+    stage.appendChild(card);
 
-    // Deal-in: start slightly low and faded, then settle.
-    topCard.style.transform = 'translate3d(0, 22px, 0) scale(0.97)';
-    topCard.style.opacity = '0';
+    // Deal-in: start slightly low and faded, then settle. Settle on the local
+    // handle, not on topCard — an answer committed inside these two frames
+    // clears topCard, and in fast mode that is a realistic amount of time.
+    card.style.transform = 'translate3d(0, 22px, 0) scale(0.97)';
+    card.style.opacity = '0';
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
-        topCard.style.transform = 'translate3d(0,0,0)';
-        topCard.style.opacity = '1';
+        if (!card.isConnected) return;
+        card.style.transform = 'translate3d(0,0,0)';
+        card.style.opacity = '1';
       });
     });
 
-    attachGesture(topCard);
-    updateChrome(q);
+    attachGesture(card);
+    updateChrome();
   }
 
-  /* Rails, tap-button labels, progress bar, counters. */
-  function updateChrome(q) {
-    railAText.textContent = '← ' + q.optionA;
-    railBText.textContent = q.optionB + ' →';
-    btnAText.textContent  = q.optionA;
-    btnBText.textContent  = q.optionB;
+  /* Rails, tap-button labels, progress bar, counters.
+     The totals move as you go: every miss adds a card back into the run, so
+     the denominator is honest rather than the deck length you started with. */
+  function updateChrome() {
+    if (current) {
+      railAText.textContent = '← ' + current.optionA;
+      railBText.textContent = current.optionB + ' →';
+      btnAText.textContent  = current.optionA;
+      btnBText.textContent  = current.optionB;
+    }
 
-    $('counter').textContent = (index + 1) + ' / ' + deck.length;
+    var live  = current ? 1 : 0;
+    var total = done + main.length + pending.length + live;
 
-    var right = results.filter(function (r) { return r.verdict === 'right'; }).length;
-    $('tally').textContent = right + ' right';
-    $('progress-fill').style.width = (index / deck.length * 100) + '%';
+    // A card that came back round is labelled, so a repeat never reads as a
+    // card you have not seen. The position keeps counting either way.
+    $('counter').textContent = (repeat && current ? 'recall · ' : '') +
+                               (done + live) + ' / ' + total;
+
+    var badge = $('recall-badge');
+    badge.classList.toggle('is-hidden', !pending.length);
+    badge.innerHTML = '&#8634;&nbsp;' + pending.length;
+
+    var right = history.filter(function (r) { return r.v === 'right'; }).length;
+    $('tally').innerHTML = right + ' &#10003;';
+    $('progress-fill').style.width = (total ? done / total * 100 : 0) + '%';
+
+    backBtn.disabled = history.length === 0;
   }
 
   /* ---- gesture ---------------------------------------------------------- */
@@ -242,18 +295,114 @@
     card.washA.style.opacity = card.washB.style.opacity = card.washSkip.style.opacity = 0;
   }
 
+  /* =========================================================================
+     THE QUEUE
+
+     Two sources feed the stage. `main` is the deck as dealt; `pending` holds
+     cards that were missed and are waiting out a relearning step. A pending
+     card whose clock is up always jumps the queue — that is what makes the
+     recall active rather than a second pass at the end.
+
+     When `main` runs dry the run enters its drain phase: the remaining pending
+     cards are served early rather than making you sit out the clock, oldest
+     due first, never the card that was just on screen if there is any choice.
+     ========================================================================= */
+  /* Returns { q, repeat } — repeat marks a card that came back off the pending
+     queue rather than being dealt fresh. */
+  function chooseNext(consume) {
+    var now  = Date.now();
+    var ripe = -1;
+    for (var i = 0; i < pending.length; i++) {
+      if (pending[i].dueAt <= now && (ripe < 0 || pending[i].dueAt < pending[ripe].dueAt)) ripe = i;
+    }
+    if (ripe >= 0) {
+      return { q: consume ? pending.splice(ripe, 1)[0].q : pending[ripe].q, repeat: true };
+    }
+
+    if (main.length) return { q: consume ? main.shift() : main[0], repeat: false };
+
+    if (pending.length) {
+      var order = pending.map(function (_, i) { return i; }).sort(function (a, b) {
+        return pending[a].dueAt - pending[b].dueAt;
+      });
+      var pick = order[0];
+      if (order.length > 1 && pending[pick].q.id === lastServed) pick = order[1];
+      return { q: consume ? pending.splice(pick, 1)[0].q : pending[pick].q, repeat: true };
+    }
+    return null;
+  }
+
+  function peekNext() {
+    var n = chooseNext(false);
+    return n && n.q;
+  }
+
+  function advance() {
+    liveVerdict = null;
+    verdict.classList.add('is-hidden');
+
+    var n = chooseNext(true);
+    if (!n) { current = null; repeat = false; finish(); return; }
+
+    lastServed = n.q.id;
+    current = n.q;
+    repeat  = n.repeat;
+    shownAt = Date.now();
+    renderStack();
+  }
+
+  /* ---- grading ------------------------------------------------------------
+     FSRS wants one of four grades, and this deck only ever collects one bit of
+     information. Hesitation supplies the rest: a swipe you did not have to
+     think about is Easy, one you sat on is Hard. Both are honest signals about
+     how well the card is actually known. */
+  function gradeFor(ms) {
+    if (ms < 4500)  return 4;   // Easy
+    if (ms > 15000) return 2;   // Hard
+    return 3;                   // Good
+  }
+
+  /* Record the review with FSRS, then decide whether the card comes back this
+     session. Returns minutes until it resurfaces, 0 if it is done for now, or
+     -1 if it has been parked after too many misses. */
+  function schedule(q, v, grade) {
+    var now = Date.now();
+    FSRS.set(q.id, FSRS.review(FSRS.get(q.id), grade, now));
+
+    var s = sess[q.id] || (sess[q.id] = { misses: 0, step: -1, parked: false });
+    if (s.parked) return -1;
+
+    if (v === 'right') {
+      if (s.step < 0) return 0;                 // never missed — nothing to redo
+      s.step += 1;
+      if (s.step >= RELEARN_STEPS.length) { s.step = -1; return 0; }
+    } else {
+      s.misses += 1;
+      if (s.misses > MAX_SESSION_MISSES) { s.parked = true; s.step = -1; return -1; }
+      s.step = 0;
+    }
+
+    var mins = RELEARN_STEPS[s.step];
+    pending.push({ q: q, dueAt: now + mins * 60000 });
+    return mins;
+  }
+
   /* ---- commit an answer -------------------------------------------------- */
-  /* choice is 'A', 'B' or 'skip'. Animates the card away, records the result,
-     then raises the verdict sheet. */
+  /* choice is 'A', 'B' or 'skip'. Animates the card away, grades it, queues any
+     repeat, then either raises the verdict sheet or — in fast mode on a correct
+     answer — flashes a tick and deals the next card. */
   function commit(choice) {
-    if (locked || !topCard) return;
+    if (locked || !topCard || !current || histPos !== null) return;
     locked = true;
 
-    var q = deck[index];
+    var q = current;
     var isSkip = choice === 'skip';
     var v = isSkip ? 'skip' : (choice === q.correct ? 'right' : 'wrong');
+    var ms = Date.now() - shownAt;
+    var due = schedule(q, v, v === 'right' ? gradeFor(ms) : 1);
 
-    results.push({ id: q.id, verdict: v, chose: isSkip ? null : choice });
+    history.push({ q: q, v: v, choice: isSkip ? null : choice, ms: ms, due: due });
+    done += 1;
 
     // Fly off in the committed direction.
     var card = topCard;
@@ -272,32 +421,76 @@
     }
     card.style.opacity = '0';
     topCard = null;
+    current = null;
+    updateChrome();
 
-    showVerdict(q, v, choice);
+    if (mode === 'fast' && v === 'right') {
+      flashTick();
+      pendingAdvance = true;
+      window.setTimeout(function () {
+        if (!pendingAdvance) return;
+        if (histPos !== null) return;    // paged back mid-flight; resume will deal
+        pendingAdvance = false;
+        locked = false;
+        advance();
+      }, FAST_ADVANCE_MS);
+      return;
+    }
+
+    liveVerdict = history[history.length - 1];
+    renderVerdict(liveVerdict, null);
   }
 
-  /* ---- verdict sheet ----------------------------------------------------- */
-  function showVerdict(q, v, choice) {
+  /* Fast mode's whole feedback budget for a correct answer. */
+  function flashTick() {
+    flash.classList.remove('is-on');
+    void flash.offsetWidth;              // force a reflow so the animation restarts
+    flash.classList.add('is-on');
+    window.setTimeout(function () { flash.classList.remove('is-on'); }, 520);
+  }
+
+  /* ---- verdict sheet ------------------------------------------------------
+     One sheet, two jobs. Live (`hist` null) it reports the card you just
+     committed. In look-back mode it replays an earlier one, read-only, with
+     ◂ ▸ to page and Resume to drop back where you were. */
+  function renderVerdict(e, hist) {
+    var q = e.q;
     var correctLabel = q.correct === 'A' ? q.optionA : q.optionB;
 
-    verdict.className = 'verdict verdict--' + (v === 'right' ? 'right' : v === 'wrong' ? 'wrong' : 'skip');
+    verdict.className = 'verdict verdict--' +
+      (e.v === 'right' ? 'right' : e.v === 'wrong' ? 'wrong' : 'skip') +
+      (hist ? ' verdict--history' : '');
+
     $('verdict-mark').textContent =
-      v === 'right' ? 'Right.' : v === 'wrong' ? 'Not that one.' : 'Skipped.';
+      e.v === 'right' ? 'Right.' : e.v === 'wrong' ? 'Not that one.' : 'Skipped.';
 
     var line;
-    if (v === 'right') {
+    if (e.v === 'right') {
       line = correctLabel + ' — yes.';
-    } else if (v === 'wrong') {
-      line = 'You said ' + (choice === 'A' ? q.optionA : q.optionB) +
+    } else if (e.v === 'wrong') {
+      line = 'You said ' + (e.choice === 'A' ? q.optionA : q.optionB) +
              '. The answer is ' + correctLabel + '.';
     } else {
-      line = 'The answer is ' + correctLabel + '. Flagged for review.';
+      line = 'The answer is ' + correctLabel + '.';
     }
+    if (e.due > 0)       line += ' Back in ' + e.due + ' min.';
+    else if (e.due < 0)  line += ' Parked — it will be waiting next session.';
     $('verdict-line').textContent = line;
     $('verdict-why').textContent  = q.explanation;
 
+    var pos = $('verdict-pos');
+    pos.classList.toggle('is-hidden', !hist);
+    if (hist) pos.textContent = 'looking back · ' + (hist.pos + 1) + ' of ' + history.length;
+
+    $('btn-next').textContent = hist ? 'Resume' : 'Next card';
+    $('btn-prev').disabled = hist ? hist.pos <= 0 : history.length < 2;
+    $('btn-fwd').classList.toggle('is-hidden', !hist);
+    $('verdict-foot').textContent = hist
+      ? 'tap anywhere to resume · ← → to page'
+      : 'tap anywhere, or press space';
+
     // Hand this card to the Ask panel and start it on a clean thread.
-    askCtx     = { q: q, v: v, choice: choice };
+    askCtx     = { q: q, v: e.v, choice: e.choice };
     askHistory = [];
     askResetLog();
 
@@ -307,11 +500,61 @@
 
   function nextCard() {
     if (!ask.classList.contains('is-hidden')) return;   // chatting — stay put
+    if (histPos !== null) return;
     if (verdict.classList.contains('is-hidden')) return;
-    verdict.classList.add('is-hidden');
     locked = false;
-    index += 1;
-    renderStack();
+    advance();
+  }
+
+  /* =========================================================================
+     LOOKING BACK
+
+     Every committed card lands in `history`, so the one you just answered is
+     never gone — useful in fast mode especially, where a correct answer flies
+     past without a verdict. Answers are not re-openable: this is a review, not
+     a second attempt, so nothing here touches the score or the schedule.
+     ========================================================================= */
+
+  /* The newest position you can page to. When the live sheet is up it already
+     shows the last entry, so look-back stops one short of it. */
+  function histMax() {
+    return history.length - (liveVerdict ? 2 : 1);
+  }
+
+  function goBack() {
+    var target = histPos !== null ? histPos - 1 : histMax();
+    if (target < 0) return;
+    openHistory(target);
+  }
+
+  function goFwd() {
+    if (histPos === null) return;
+    if (histPos + 1 > histMax()) { exitHistory(); return; }
+    openHistory(histPos + 1);
+  }
+
+  function openHistory(pos) {
+    if (pos < 0 || pos >= history.length) return;
+    histPos = pos;
+    locked  = true;                       // the card underneath stops listening
+    renderVerdict(history[pos], { pos: pos });
+  }
+
+  function exitHistory() {
+    histPos = null;
+
+    if (liveVerdict) { renderVerdict(liveVerdict, null); return; }
+
+    verdict.classList.add('is-hidden');
+    askCtx = null;
+    if (pendingAdvance) {                 // fast mode was mid-hop when we paged back
+      pendingAdvance = false;
+      locked = false;
+      advance();
+      return;
+    }
+    locked = false;
+    updateChrome();
   }
 
   /* =========================================================================
@@ -713,11 +956,20 @@
     });
   }
 
-  /* ---- summary ----------------------------------------------------------- */
+  /* ---- summary -----------------------------------------------------------
+     Counts are over attempts, not cards, because a card you missed and then
+     retook twice is three attempts and the tally you watched said so. The
+     review lists below are per card, which is what you actually want to read. */
   function finish() {
-    var right   = results.filter(function (r) { return r.verdict === 'right'; }).length;
-    var wrong   = results.filter(function (r) { return r.verdict === 'wrong'; }).length;
-    var skipped = results.filter(function (r) { return r.verdict === 'skip';  }).length;
+    verdict.classList.add('is-hidden');
+    liveVerdict = null;
+    histPos = null;
+    locked = false;
+    closeAsk();
+
+    var right   = history.filter(function (r) { return r.v === 'right'; }).length;
+    var wrong   = history.filter(function (r) { return r.v === 'wrong'; }).length;
+    var skipped = history.filter(function (r) { return r.v === 'skip';  }).length;
     var answered = right + wrong;
     var acc = answered ? Math.round(right / answered * 100) : 0;
 
@@ -726,30 +978,46 @@
     $('sum-wrong').textContent    = wrong + ' wrong';
     $('sum-skipped').textContent  = skipped + ' skipped';
 
-    var byId = {};
-    deck.forEach(function (q) { byId[q.id] = q; });
+    // Roll attempts up into one row per card, keeping deck order.
+    var order = [], byId = {};
+    history.forEach(function (r) {
+      var row = byId[r.q.id];
+      if (!row) { row = byId[r.q.id] = { q: r.q, wrong: 0, skip: 0 }; order.push(row); }
+      if (r.v === 'wrong') row.wrong += 1;
+      if (r.v === 'skip')  row.skip  += 1;
+    });
+
+    var parked  = order.filter(function (r) { var s = sess[r.q.id]; return s && s.parked; });
+    var missed  = order.filter(function (r) { return r.wrong && parked.indexOf(r) < 0; });
+    var skips   = order.filter(function (r) { return r.skip && !r.wrong && parked.indexOf(r) < 0; });
 
     var html = '';
-    html += renderReview('Missed', results.filter(function (r) { return r.verdict === 'wrong'; }), byId, 'wrong');
-    html += renderReview('Skipped', results.filter(function (r) { return r.verdict === 'skip'; }), byId, 'skip');
-    if (!wrong && !skipped) {
-      html = '<p class="review-h">Review</p><p class="review-empty">Nothing missed, nothing skipped. Clean board.</p>';
+    html += renderReview('Still shaky', parked, 'wrong',
+                         'Missed too often to keep circling today. FSRS has them queued for next time.');
+    html += renderReview('Missed, then recovered', missed, 'wrong', '');
+    html += renderReview('Skipped', skips, 'skip', '');
+    if (!html) {
+      html = '<p class="review-h">Review</p>' +
+             '<p class="review-empty">Nothing missed, nothing skipped. Clean board.</p>';
     }
     $('review-block').innerHTML = html;
+    $('sum-sched').textContent = schedLine();
 
     show('summary');
     screens.summary.querySelector('.screen__inner').scrollTop = 0;
+    startStats();
   }
 
-  function renderReview(title, rows, byId, kind) {
+  function renderReview(title, rows, kind, note) {
     if (!rows.length) return '';
     var out = '<p class="review-h">' + title + ' · ' + rows.length + '</p>';
+    if (note) out += '<p class="review-note">' + esc(note) + '</p>';
     rows.forEach(function (r) {
-      var q = byId[r.id];
-      if (!q) return;
+      var q = r.q;
       var correctLabel = q.correct === 'A' ? q.optionA : q.optionB;
+      var times = r.wrong > 1 ? ' <span class="review-item__n">missed ' + r.wrong + '×</span>' : '';
       out += '<div class="review-item review-item--' + kind + '">' +
-             '<p class="review-item__q">' + esc(q.question) + '</p>' +
+             '<p class="review-item__q">' + esc(q.question) + times + '</p>' +
              '<p class="review-item__a"><b>' + esc(correctLabel) + '</b></p>' +
              '<p class="review-item__why">' + esc(q.explanation) + '</p>' +
              '</div>';
@@ -757,51 +1025,232 @@
     return out;
   }
 
+  /* When the cards worked this session next come round, per FSRS. */
+  function schedLine() {
+    if (!history.length) return '';
+    var now = Date.now(), soonest = Infinity, seen = {}, n = 0;
+    history.forEach(function (r) {
+      if (seen[r.q.id]) return;
+      seen[r.q.id] = 1; n += 1;
+      var due = FSRS.get(r.q.id).due;
+      if (due < soonest) soonest = due;
+    });
+    if (!isFinite(soonest)) return '';
+    return n + ' cards scheduled · first one back ' + fmtWhen(soonest - now) + '.';
+  }
+
+  function fmtWhen(ms) {
+    if (ms <= 60000) return 'in a moment';
+    var mins = Math.round(ms / 60000);
+    if (mins < 90)   return 'in ' + mins + ' min';
+    var hrs = Math.round(mins / 60);
+    if (hrs < 36)    return 'in ' + hrs + ' hour' + (hrs === 1 ? '' : 's');
+    return 'in ' + Math.round(hrs / 24) + ' days';
+  }
+
   /* ---- deck control ------------------------------------------------------ */
-  function startDeck(doShuffle) {
+  /* kind: 'deck' | 'shuffle' | 'due' */
+  function startDeck(kind) {
     var source = window.QUESTIONS || [];
-    deck    = doShuffle ? shuffle(source) : source.slice();
-    index   = 0;
-    results = [];
+    var list;
+
+    if (kind === 'due') {
+      var now = Date.now();
+      list = source.filter(function (q) {
+        var st = FSRS.get(q.id);
+        return st.reps > 0 && st.due <= now;
+      });
+      if (!list.length) list = source.slice();   // nothing due after all
+    } else {
+      list = kind === 'shuffle' ? shuffle(source) : source.slice();
+    }
+
+    main    = list;
+    pending = [];
+    history = [];
+    sess    = {};
+    done    = 0;
+    current = null;
+    repeat  = false;
+    lastServed  = null;
+    histPos     = null;
+    liveVerdict = null;
+    pendingAdvance = false;
     locked  = false;
+
     closeAsk();
     verdict.classList.add('is-hidden');
     show('quiz');
-    renderStack();
+    advance();
+  }
+
+  /* ---- pace -------------------------------------------------------------- */
+  function setMode(m) {
+    mode = m === 'fast' ? 'fast' : 'slow';
+    try { localStorage.setItem(MODE_LS, mode); } catch (e) { /* won't persist */ }
+
+    $('mode-slow').setAttribute('aria-checked', String(mode === 'slow'));
+    $('mode-fast').setAttribute('aria-checked', String(mode === 'fast'));
+    $('mode-slow').classList.toggle('is-on', mode === 'slow');
+    $('mode-fast').classList.toggle('is-on', mode === 'fast');
+
+    var pill = $('btn-mode');
+    pill.textContent = mode;
+    pill.classList.toggle('pill--fast', mode === 'fast');
+  }
+
+  /* ---- key gate ----------------------------------------------------------
+     The key is asked for once at the top of a run rather than the first time
+     you reach for Ask, which is always mid-thought about a question. Skippable:
+     the deck itself needs nothing. Skipping is remembered for this page load
+     only, so it asks again next launch but never twice in a sitting. */
+  var gate = $('gate');
+  var gateThen    = null;   // which start to run once the gate closes
+  var gateSkipped = false;
+
+  function startWithGate(kind) {
+    if (!keyGet() && !gateSkipped) { gateThen = kind; openGate(); return; }
+    startDeck(kind);
+  }
+
+  function openGate() {
+    var has = !!keyGet();
+    $('gate-input').value = '';
+    $('gate-eyebrow').textContent = gateThen ? 'before you start' : 'ask';
+    $('gate-title').textContent   = has ? 'Replace your API key' : 'Anthropic API key';
+    $('btn-gate-save').textContent = gateThen ? 'Save & start' : 'Save key';
+    $('btn-gate-skip').textContent = gateThen ? 'Start without it' : 'Close';
+    $('btn-gate-forget').classList.toggle('is-hidden', !has);
+    gate.classList.remove('is-hidden');
+    $('gate-input').focus({ preventScroll: true });
+  }
+
+  function closeGate() {
+    gate.classList.add('is-hidden');
+    var kind = gateThen;
+    gateThen = null;
+    keyStateLine();
+    if (kind) startDeck(kind);
+  }
+
+  function keyStateLine() {
+    var has = !!keyGet();
+    $('key-state').textContent = has
+      ? 'Ask key stored on this device.'
+      : 'No Ask key yet — the deck works without one.';
+    $('btn-key-open').textContent = has ? 'replace' : 'add one';
+  }
+
+  /* ---- start screen counts ----------------------------------------------- */
+  function startStats() {
+    var source = window.QUESTIONS || [];
+    var now = Date.now(), studied = 0, due = 0;
+    source.forEach(function (q) {
+      var st = FSRS.get(q.id);
+      if (!st.reps) return;
+      studied += 1;
+      if (st.due <= now) due += 1;
+    });
+
+    $('deck-count').textContent = source.length + ' cards · ' + studied +
+      ' studied · ' + due + ' due now';
+
+    var b = $('btn-start-due');
+    b.classList.toggle('is-hidden', due === 0);
+    b.textContent = 'Review due · ' + due;
   }
 
   /* ---- wiring ------------------------------------------------------------ */
-  $('btn-start').addEventListener('click',         function () { startDeck(false); });
-  $('btn-start-shuffle').addEventListener('click', function () { startDeck(true);  });
-  $('btn-restart').addEventListener('click',       function () { startDeck(false); });
-  $('btn-reshuffle').addEventListener('click',     function () { startDeck(true);  });
+  $('btn-start').addEventListener('click',         function () { startWithGate('deck');    });
+  $('btn-start-shuffle').addEventListener('click', function () { startWithGate('shuffle'); });
+  $('btn-start-due').addEventListener('click',     function () { startWithGate('due');     });
+  $('btn-restart').addEventListener('click',       function () { startDeck('deck');    });
+  $('btn-reshuffle').addEventListener('click',     function () { startDeck('shuffle'); });
 
   $('btn-a').addEventListener('click',    function () { commit('A'); });
   $('btn-b').addEventListener('click',    function () { commit('B'); });
   $('btn-skip').addEventListener('click', function () { commit('skip'); });
 
-  $('btn-next').addEventListener('click', function (e) { e.stopPropagation(); nextCard(); });
-  verdict.addEventListener('click', nextCard);   // tap anywhere on the sheet
+  $('mode-slow').addEventListener('click', function () { setMode('slow'); });
+  $('mode-fast').addEventListener('click', function () { setMode('fast'); });
+  $('btn-mode').addEventListener('click',  function () { setMode(mode === 'fast' ? 'slow' : 'fast'); });
+
+  backBtn.addEventListener('click', goBack);
+  $('btn-prev').addEventListener('click', function (e) { e.stopPropagation(); goBack(); });
+  $('btn-fwd').addEventListener('click',  function (e) { e.stopPropagation(); goFwd();  });
+  $('btn-next').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (histPos !== null) exitHistory(); else nextCard();
+  });
+  verdict.addEventListener('click', function () {   // tap anywhere on the sheet
+    if (histPos !== null) exitHistory(); else nextCard();
+  });
+
+  $('btn-key-open').addEventListener('click', openGate);
+  $('btn-gate-save').addEventListener('click', function () {
+    var v = $('gate-input').value.trim();
+    if (!v) { $('gate-input').focus(); return; }
+    keySet(v);
+    askMode();
+    closeGate();
+  });
+  $('btn-gate-skip').addEventListener('click', function () {
+    if (gateThen) gateSkipped = true;
+    closeGate();
+  });
+  $('btn-gate-forget').addEventListener('click', function () {
+    keySet('');
+    askMode();
+    openGate();
+  });
+  $('gate-input').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); $('btn-gate-save').click(); }
+  });
+
+  $('btn-forget-memory').addEventListener('click', function () {
+    if (!window.confirm('Clear what the app remembers about every card? Scheduling starts from scratch.')) return;
+    FSRS.clear();
+    startStats();
+    $('sum-sched').textContent = 'Memory cleared.';
+  });
 
   document.addEventListener('keydown', function (e) {
-    // While the Ask panel is up it owns the keyboard — otherwise a space typed
-    // into the composer would advance the deck out from under the chat.
+    // Whichever sheet is up owns the keyboard — otherwise a space typed into
+    // the composer would advance the deck out from under the chat.
     if (!ask.classList.contains('is-hidden')) {
       if (e.key === 'Escape') closeAsk();
       return;
     }
+    if (!gate.classList.contains('is-hidden')) {
+      if (e.key === 'Escape') $('btn-gate-skip').click();
+      return;
+    }
+    if (histPos !== null) {
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); goBack(); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); goFwd();  }
+      if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault(); exitHistory();
+      }
+      return;
+    }
     if (!verdict.classList.contains('is-hidden')) {
       if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); nextCard(); }
+      if (e.key === 'ArrowLeft')              { e.preventDefault(); goBack();  }
       return;
     }
     if (screens.quiz.classList.contains('is-hidden')) return;
+    if (e.key === 'Backspace')  { e.preventDefault(); goBack(); return; }
     if (e.key === 'ArrowLeft')  commit('A');
     if (e.key === 'ArrowRight') commit('B');
     if (e.key === 'ArrowUp')    commit('skip');
   });
 
-  $('deck-count').textContent =
-    (window.QUESTIONS ? window.QUESTIONS.length : 0) + ' cards in the deck';
+  /* ---- boot -------------------------------------------------------------- */
+  var savedMode = 'slow';
+  try { savedMode = localStorage.getItem(MODE_LS) || 'slow'; } catch (e) { /* blocked */ }
+  setMode(savedMode);
+  startStats();
+  keyStateLine();
 
   show('start');
 

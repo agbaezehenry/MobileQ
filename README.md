@@ -4,6 +4,11 @@ A swipe-based quiz PWA. One question per card, filling the screen: swipe **left*
 left-hand answer, **right** for the right-hand answer, **up** to skip. Vanilla HTML, CSS
 and JS — no framework, no build step, no npm. Push the files, enable Pages, done.
 
+Cards you miss come back a couple of minutes later and keep coming back until they stick;
+[FSRS-5](#spaced-repetition-fsrs-5) schedules everything else across sessions. **Fast** mode
+only stops you when you get one wrong. The `←` at the top left reopens anything you have
+already answered.
+
 The deck that ships with it is a 154-card drill on **metrics and ML systems**. The metrics
 half splits into four families:
 
@@ -36,12 +41,87 @@ The `systems` family covers the machinery around the model rather than the model
 ```
 index.html      app shell + iOS meta tags
 styles.css      chalkboard styling
-app.js          swipe gesture, scoring, summary, Ask chat
+app.js          swipe gesture, queue, scoring, summary, Ask chat
+fsrs.js         FSRS-5 scheduler + the per-card memory it runs on
 questions.js    the question bank — edit this, nothing else
 manifest.json   PWA manifest
 sw.js           service worker (offline cache)
 icons/          192, 512, and a maskable 512
 ```
+
+---
+
+## Pace: slow or fast
+
+Picked on the start screen, and swappable mid-run from the `SLOW` / `FAST` pill in the top
+right. It sticks between launches.
+
+| | on a right answer | on a miss or a skip |
+| --- | --- | --- |
+| **Slow** | verdict sheet, tap to continue | verdict sheet |
+| **Fast** | a green tick, then the next card ~0.3s later | verdict sheet |
+
+Fast mode exists because most of a drill is cards you already know, and reading "Right." on
+each of them is pure tax. It stops you exactly where stopping is worth something.
+
+You lose nothing by going fast — the cards that flew past are still in the look-back, Ask
+button and all.
+
+## Looking back
+
+The `←` at the top left reopens the card you just answered. From there `←` and `→` page
+through everything you have answered this run, and **Resume** drops you back where you were.
+On a keyboard: backspace to open, arrows to page, escape to resume.
+
+It is a review, not a second attempt — nothing there changes the score or the schedule. The
+**Ask** button works on any card you page to, which is the intended way to interrogate
+something fast mode skated past.
+
+## Active recall
+
+Miss a card and it comes back **2 minutes later**, mid-deck, jumping ahead of new material.
+Get it right then and it comes back once more **10 minutes** after that before it graduates.
+Miss it again at any point and it drops back to the start of those steps. The `↺` badge in
+the top bar counts what is queued, and the counter says `recall · 41 / 160` whenever the card
+in front of you is one that came back round.
+
+The run does not end while anything is still owed: once the fresh cards run out, whatever is
+left is served early rather than making you wait out the clock. A card missed more than three
+times in one sitting stops circling — it is listed under **Still shaky** on the summary and
+left for the next session.
+
+Those minute-scale steps are ordinary relearning steps, deliberately kept **in front of**
+FSRS rather than inside it — the same split Anki uses.
+
+## Spaced repetition (FSRS-5)
+
+`fsrs.js` is the real thing: stability, difficulty, and the power-law forgetting curve
+`R(t) = (1 + (19/81)·t/S)^-0.5`, with the FSRS-5 default weights. Every card carries `{s, d,
+reps, lapses, last, due}` in `localStorage` under `metric-board.fsrs.v1`, keyed by question
+`id`. Nothing leaves the device.
+
+Grades come off the swipe. A miss or a skip is **Again**. A correct answer is graded by
+hesitation, since that is the only other signal a two-choice card offers: under 4.5s is
+**Easy**, over 15s is **Hard**, anything between is **Good**.
+
+Once a card has a review history, the start screen offers **Review due · N**, which deals
+only the cards whose due date has passed.
+
+### One stability credit per sitting
+
+The one place this departs from stock FSRS-5, and the reason is specific to a drill app.
+FSRS's short-term formula multiplies stability by about 1.4 for every same-day success. That
+is fine when a card gets one or two of those; this app hands a missed card two more exposures
+inside ten minutes and lets you re-run the whole deck back to back. Compounding it sends a
+card you have merely re-swiped out to a months-long interval on no real evidence — ten
+repeats in four minutes measured out at a 97-day interval before this was fixed.
+
+So successes less than 30 minutes apart are fully recorded — reps, difficulty, due date — but
+do not grow stability. Misses always count, however recent the last look: forgetting is
+information no matter what. Come back to the same card half an hour later and it credits
+normally.
+
+There is a **Clear the spaced-repetition memory** link at the bottom of the summary screen.
 
 ## Run it locally
 
@@ -53,7 +133,7 @@ python3 -m http.server 8000
 ```
 
 On desktop the arrow keys work as a stand-in for swiping: `←` `→` `↑`, then space for the
-next card.
+next card. Backspace opens the look-back; inside it the arrows page and escape resumes.
 
 ---
 
@@ -131,7 +211,15 @@ The thread resets with each new card.
 ### It needs your own API key
 
 This is a static site with no backend, so there is nowhere to hide a server-side secret.
-The first time you tap Ask it asks for an Anthropic API key, which is:
+
+It is asked for **at the top of a run**, before the first card, rather than the first time
+you reach for Ask — that moment is always mid-thought about a question, and paying attention
+to a key field there means losing the thread. The prompt is skippable (**Start without it**);
+the deck itself needs nothing. Skipping is remembered for that page load, so it asks once per
+launch and never twice in a sitting. Once a key is stored the prompt stops appearing, and the
+start screen grows a **replace** link for changing it later.
+
+The key is:
 
 - stored in that browser's `localStorage` under `metric-board.anthropic-key`
 - sent to `api.anthropic.com` and nowhere else
@@ -184,11 +272,10 @@ Only `transform` and `opacity` animate. `prefers-reduced-motion` is respected.
 
 ## Deliberately left out of v1
 
-- **Spaced repetition (FSRS).** Persist per-card stability/difficulty/due-date in
-  `localStorage` keyed by question `id`, grade each swipe as Again/Hard/Good (skip → Again),
-  and add a "Review due" entry point on the start screen that filters the deck to cards due
-  today. The `id` field is already stable and unique, which is the only thing v1 needed to
-  get right for this to be additive later.
+- **Optimised FSRS weights.** `fsrs.js` ships the FSRS-5 defaults, trained on the open Anki
+  review-log corpus. Your own review history is being written to `localStorage` already, so
+  running it through the FSRS optimiser and pasting the resulting 19 numbers over `W` would
+  personalise the schedule. Not worth it until a few hundred reviews have accumulated.
 - **Confidence tap.** A low/med/high tap before committing, stored alongside the result, so
   the summary can show a calibration curve and a Brier score — which would make the app an
   instance of one of its own questions.
