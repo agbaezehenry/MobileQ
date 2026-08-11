@@ -219,6 +219,48 @@ body::before {
   outline-offset: 3px;
 }
 
+/* ---- topic picker (start screen) ----------------------------------------
+   One chip per family in the deck, with its card count. Built in app.js from
+   whatever topics questions.js contains, so adding a family to the deck adds a
+   chip here with no markup change. */
+.pick-h {
+  margin: 8px 0 -6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--chalk-faint);
+}
+.topics { display: flex; flex-wrap: wrap; gap: 8px; }
+.topic {
+  appearance: none; font: inherit; cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 7px;
+  padding: 8px 13px;
+  color: var(--chalk-soft);
+  background: rgba(243, 240, 230, 0.035);
+  border: 1.5px solid var(--chalk-hair);
+  border-radius: 13px 11px 14px 12px;
+  transition: transform 0.12s ease, background 0.18s ease, border-color 0.2s ease;
+}
+.topic:active { transform: scale(0.96); }
+.topic b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.02rem;
+  line-height: 1;
+}
+.topic i {
+  font-style: normal;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  color: var(--chalk-faint);
+}
+.topic.is-on {
+  background: rgba(243, 240, 230, 0.10);
+  border-color: var(--chalk-soft);
+}
+.topic.is-on b { color: var(--tint-b); }
+.topic.is-on i { color: var(--chalk-soft); }
+
 /* ---- pace picker (start screen) -----------------------------------------
    Slow reads every verdict. Fast only stops you on a miss, which is the whole
    point: the cards you already know should cost a swipe and nothing more. */
@@ -435,7 +477,13 @@ body::before {
 .card--scene .card__q { font-size: clamp(1.12rem, 4.5vw, 1.42rem); }
 
 /* ---- written answers ----------------------------------------------------
-   No left, no right: the card is a page to write on. */
+   No left, no right: the card is a page to write on. A written question can be
+   several lines longer than a two-option one — it often has to say how much of
+   an answer it wants — so unlike a swipe card this one scrolls. It can afford
+   to: there is no gesture to protect, and .stage.is-writing hands touch back to
+   the browser. Authored newlines are kept, so a question can pose a list. */
+.card--open { overflow-y: auto; overscroll-behavior: contain; }
+.card--open .card__q { white-space: pre-line; }
 .card__write { display: flex; flex-direction: column; gap: 8px; }
 .card__answer {
   width: 100%;

@@ -44,7 +44,8 @@
      off and the tick to register, then deals the next one. */
   var FAST_ADVANCE_MS = 300;
 
-  var MODE_LS = 'metric-board.mode';
+  var MODE_LS   = 'metric-board.mode';
+  var TOPICS_LS = 'metric-board.topics';
 
   /* ---- element handles -------------------------------------------------- */
   var $ = function (id) { return document.getElementById(id); };
@@ -180,6 +181,37 @@
   var DECK  = normalise(window.QUESTIONS);   // units, in deck order
   var CARDS = [];                            // every card, flat — for stats and 'due'
   DECK.forEach(function (u) { CARDS = CARDS.concat(u.cards); });
+
+  /* ---- topics -------------------------------------------------------------
+     A card's topic reads "family · group"; the family is what you pick by, so
+     the chip row is derived from the deck rather than configured anywhere. A
+     unit takes its family from its first card, which is also the entry's own
+     topic unless a scenario step overrode it. */
+  function familyOf(topic) {
+    return String(topic || '').split('·')[0].trim() || 'other';
+  }
+
+  var FAMILIES = [];                         // [{ name, count }], deck order
+  (function () {
+    var byName = {};
+    DECK.forEach(function (u) {
+      var f = familyOf(u.cards[0].topic);
+      if (!byName[f]) { byName[f] = { name: f, count: 0 }; FAMILIES.push(byName[f]); }
+      byName[f].count += u.cards.length;
+    });
+  })();
+
+  var picked = null;   // null means every family; otherwise a list of names
+
+  function unitPicked(u) {
+    return !picked || picked.indexOf(familyOf(u.cards[0].topic)) >= 0;
+  }
+  function pickedDeck()  { return DECK.filter(unitPicked); }
+  function pickedCards() {
+    var out = [];
+    pickedDeck().forEach(function (u) { out = out.concat(u.cards); });
+    return out;
+  }
 
   /* The reference answer, whichever kind of card it is. */
   function answerLabel(q) {
@@ -1496,17 +1528,18 @@
      step, not the scenario it arrived in. Whole runs keep the units together so
      the chains stay chains, and shuffling shuffles units for the same reason. */
   function startDeck(kind) {
+    var deck = pickedDeck();                     // whatever the topic chips say
     var list;
 
     if (kind === 'due') {
       var now = Date.now();
-      list = CARDS.filter(function (c) {
+      list = pickedCards().filter(function (c) {
         var st = FSRS.get(c.id);
         return st.reps > 0 && st.due <= now;
       }).map(function (c) { return { id: c.id, cards: [c] }; });
-      if (!list.length) list = DECK.slice();     // nothing due after all
+      if (!list.length) list = deck.slice();     // nothing due after all
     } else {
-      list = kind === 'shuffle' ? shuffle(DECK) : DECK.slice();
+      list = kind === 'shuffle' ? shuffle(deck) : deck.slice();
     }
 
     main    = list;
@@ -1589,17 +1622,63 @@
     $('btn-key-open').textContent = has ? 'replace' : 'add one';
   }
 
+  /* ---- topic picker -------------------------------------------------------
+     Tapping a family while everything is selected narrows to just that family,
+     because "quiz me on Redis" is the thing people come here to do. Tapping
+     more adds them, and turning the last one off falls back to All rather than
+     leaving a deck with nothing in it. */
+  function setPicked(next) {
+    if (next && !next.length) next = null;
+    picked = next;
+    try {
+      if (picked) localStorage.setItem(TOPICS_LS, JSON.stringify(picked));
+      else localStorage.removeItem(TOPICS_LS);
+    } catch (e) { /* won't persist */ }
+    renderTopics();
+    startStats();
+  }
+
+  function toggleFamily(name) {
+    if (!picked) { setPicked([name]); return; }   // from everything to just this
+    var next = picked.slice();
+    var at = next.indexOf(name);
+    if (at >= 0) next.splice(at, 1); else next.push(name);
+    setPicked(next);
+  }
+
+  function renderTopics() {
+    var row = $('topics');
+    row.innerHTML = '';
+
+    var chip = function (label, count, on, fn) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'topic' + (on ? ' is-on' : '');
+      b.setAttribute('aria-pressed', String(!!on));
+      b.innerHTML = '<b>' + esc(label) + '</b><i>' + count + '</i>';
+      b.addEventListener('click', fn);
+      return b;
+    };
+
+    row.appendChild(chip('All', CARDS.length, !picked, function () { setPicked(null); }));
+    FAMILIES.forEach(function (f) {
+      row.appendChild(chip(f.name, f.count, !!picked && picked.indexOf(f.name) >= 0,
+        function () { toggleFamily(f.name); }));
+    });
+  }
+
   /* ---- start screen counts ----------------------------------------------- */
   function startStats() {
+    var deck = pickedCards();
     var now = Date.now(), studied = 0, due = 0;
-    CARDS.forEach(function (q) {
+    deck.forEach(function (q) {
       var st = FSRS.get(q.id);
       if (!st.reps) return;
       studied += 1;
       if (st.due <= now) due += 1;
     });
 
-    $('deck-count').textContent = CARDS.length + ' cards · ' + studied +
+    $('deck-count').textContent = deck.length + ' cards · ' + studied +
       ' studied · ' + due + ' due now';
 
     var b = $('btn-start-due');
@@ -1713,6 +1792,20 @@
   var savedMode = 'slow';
   try { savedMode = localStorage.getItem(MODE_LS) || 'slow'; } catch (e) { /* blocked */ }
   setMode(savedMode);
+
+  // Restore the topic selection, dropping any family the deck no longer has —
+  // questions.js is meant to be edited, so a stored name can go stale.
+  try {
+    var savedTopics = JSON.parse(localStorage.getItem(TOPICS_LS) || 'null');
+    if (savedTopics && savedTopics.length) {
+      picked = savedTopics.filter(function (name) {
+        return FAMILIES.some(function (f) { return f.name === name; });
+      });
+      if (!picked.length) picked = null;
+    }
+  } catch (e) { picked = null; }
+
+  renderTopics();
   startStats();
   keyStateLine();
 

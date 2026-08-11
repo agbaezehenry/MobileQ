@@ -1868,6 +1868,557 @@ const QUESTIONS = [
         explanation: "The model's probabilities are still correct — nothing about predicting fraud changed. What moved is the economics, so the cut-off moves with them: p > 400/495 ≈ 0.81, and you now block considerably less. Retraining here would be answering a question nobody asked."
       }
     ]
+  },
+
+  /* ---------------------------------------------------------------------------
+     REDIS — data structures, delivery guarantees, clustering and the failure
+     modes that make each choice a real decision rather than a lookup.
+     ------------------------------------------------------------------------ */
+  {
+    id: "red-001",
+    topic: "redis · caching",
+    type: "open",
+    question: "Your product API reads product 123 out of PostgreSQL over and over, and the row only changes every few minutes. How would you use Redis to cut the database traffic? Name the key, the value, and how you stop it serving stale data forever.",
+    answer: "Cache it under a key like product:123, storing the row as JSON or as a Hash. On a read, check Redis first; on a miss, read PostgreSQL, write the result into Redis, and return it. Give the key a TTL — five minutes, say — so a stale copy can only ever be stale for that long.",
+    keyPoints: [
+      "a key namespaced by id, e.g. product:123",
+      "the row stored as JSON or a Hash",
+      "a TTL (or explicit invalidation) bounding how stale it can get"
+    ],
+    explanation: "This is the cache-aside pattern: the application owns the read-through, not Redis. The TTL is doing something subtler than saving memory — it bounds how wrong you are willing to be. Five minutes of staleness on a description is fine; five minutes on a price might not be, and that is how you pick the number."
+  },
+  {
+    id: "red-002",
+    topic: "redis · strings",
+    type: "open",
+    question: "A news site counts views of article 456. There are 100 application servers and thousands of simultaneous readers. How does Redis count them without losing increments, and why do you not need a lock of your own?",
+    answer: "Use a String counter, article:456:views, and call INCR. INCR is atomic, so two hundred concurrent increments produce two hundred increments. You need no lock because the read, the add and the write all happen inside Redis as one command — there is no window in which another client can interleave.",
+    keyPoints: [
+      "INCR on a String key",
+      "INCR is atomic, so concurrent increments cannot overwrite one another",
+      "no lock needed: the read-modify-write happens inside Redis, not in your process"
+    ],
+    explanation: "The bug you are avoiding is GET 41 → add one → SET 42, run twice at once, landing on 42 instead of 43. Redis commands are atomic because the server works through them one at a time, so anything expressible as a single command needs no coordination from you. That is the shape of most good Redis solutions: find the one command that already does it."
+  },
+  {
+    id: "red-003",
+    topic: "redis · hashes",
+    type: "open",
+    question: "You have 50 stateless application servers, and a logged-in user may hit a different one on every request. How would a Redis Hash hold that user's session, and why prefer a Hash over storing the whole session as one serialised JSON string?",
+    answer: "Store session:abc123 as a Hash with fields like userId, role and lastSeen. Any server can HGET or HSET it, so the session lives beside the fleet rather than inside one machine. A Hash lets you read or write one field without fetching, parsing, re-serialising and writing back the whole blob — cheaper, and free of the lost-update race two servers hit when they each rewrite the same JSON.",
+    keyPoints: [
+      "session:<id> as a Hash that any server can read",
+      "read or update individual fields instead of rewriting the whole object",
+      "avoids the read-modify-write race on a serialised blob"
+    ],
+    explanation: "Statelessness is the whole point: the servers stay interchangeable because none of them owns the session. And the Hash-versus-JSON argument is the same story as INCR — updating one field of a JSON string means two servers can each write back a copy missing the other's change."
+  },
+  {
+    id: "red-004",
+    topic: "redis · sets",
+    type: "open",
+    question: "You are building a social network and need to answer 'does user 123 follow user 456?' very quickly. How would a Redis Set represent that, and what other queries do set operations give you for free?",
+    answer: "Keep user:123:following as a Set of the ids that user follows; SISMEMBER user:123:following 456 answers the question in constant time. Because it is a set, SINTER across two users' following sets gives people they both follow, intersecting one user's following with another's followers gives mutuals, and SDIFF gives suggestions — people your friend follows and you do not.",
+    keyPoints: [
+      "a Set per user holding the ids they follow",
+      "SISMEMBER for the membership check",
+      "intersection/difference for mutuals, shared follows or suggestions"
+    ],
+    explanation: "The win is that the data is stored in the shape the question is asked in — the structure is the index. The cost is that you now hold the graph twice if you also want followers, and Redis will not keep the two directions consistent for you."
+  },
+
+  {
+    id: "red-scn-001",
+    topic: "redis · queues",
+    type: "scenario",
+    scenario: "Your web servers produce image-processing jobs and five workers consume them. You are building the queue on Redis.",
+    steps: [
+      {
+        id: "red-005",
+        type: "open",
+        question: "Implement a simple FIFO work queue with a Redis List. Which side do producers push to, and which side do workers pop from?",
+        answer: "Producers RPUSH the job onto the right of a jobs list and workers LPOP from the left — or better, BLPOP, which parks the worker until something arrives instead of polling. Pushing and popping at opposite ends is what makes it first-in-first-out; using the same end would give you a stack.",
+        keyPoints: [
+          "push and pop at opposite ends — e.g. RPUSH then LPOP",
+          "opposite ends is precisely what makes it FIFO"
+        ],
+        explanation: "BLPOP is the version you actually want in production: blocking beats spinning on an empty list. Note what this queue does not give you — no acknowledgement, no retry, no way to see who is working on what."
+      },
+      {
+        id: "red-006",
+        type: "open",
+        question: "A worker pops a job and crashes one millisecond later. What problem do you now have, and why might Redis Streams be a better choice?",
+        answer: "The job is gone. LPOP removed it and nothing recorded that a worker had taken it, so there is no way to tell a job that finished from a job that vanished with the process. A Stream read through a consumer group keeps the entry after delivery and tracks it as pending against that consumer until it is acknowledged, so unfinished work stays visible and recoverable.",
+        keyPoints: [
+          "the job is lost — popping removes it with no record of who took it",
+          "Streams retain the entry and track delivery until it is acknowledged"
+        ],
+        explanation: "This is the difference between a queue and a log with delivery state. RPOPLPUSH into a processing list is the classic List-based patch and it does work, but you end up hand-building what a consumer group already provides: pending entries, ownership, idle time and claiming."
+      },
+      {
+        id: "red-007",
+        type: "open",
+        question: "You switch to a Stream with a consumer group. Worker A is delivered job 928 and crashes before finishing it. What does Redis know about that job, and how does Worker B eventually process it?",
+        answer: "The entry is still in the stream, and the group's pending entries list records that 928 was delivered to A, when, and how many times — it is unacknowledged, not gone. Worker B can find it with XPENDING and take ownership with XCLAIM, or let XAUTOCLAIM sweep anything idle past a threshold. B processes it and calls XACK, which is what finally clears it from the pending list.",
+        keyPoints: [
+          "the entry remains, tracked in the group's pending entries list against A",
+          "another consumer claims it with XCLAIM/XAUTOCLAIM and acknowledges with XACK"
+        ],
+        explanation: "The pending entries list is the entire feature: delivery and completion are separate events and the gap between them is queryable. The idle threshold is a real judgement call — set it too short and you hand a job to a second worker while the first is merely slow, which is exactly the situation idempotency exists to survive."
+      }
+    ]
+  },
+
+  {
+    id: "red-008",
+    topic: "redis · streams",
+    type: "open",
+    question: "A network problem causes a Stream message to be processed twice. The message says 'charge customer $100'. Why is that dangerous, and what property does your worker need?",
+    answer: "The customer is charged twice for one order. The worker needs to be idempotent: processing the same logical job any number of times has the same effect as processing it once. In practice that means carrying a stable id — the job id, or an idempotency key on the charge — and having the payment provider or your own database reject the second attempt, rather than trusting that delivery never repeats.",
+    keyPoints: [
+      "a duplicate charge — real money, taken twice",
+      "idempotency: repeated processing has the same effect as processing once",
+      "implemented with a unique job or idempotency key checked where the effect lands"
+    ],
+    explanation: "At-least-once is what almost every queue actually offers, Streams included: a crash between doing the work and acknowledging it is indistinguishable from a crash before doing it. So exactly-once is not a delivery guarantee you buy, it is a property you build at the point of effect. 'Set the balance to X' is naturally idempotent; 'add X to the balance' is not."
+  },
+  {
+    id: "red-009",
+    topic: "redis · pub/sub",
+    type: "open",
+    question: "You are building a live sports dashboard: when a score changes, connected users should see it immediately, and you do not care whether someone offline gets the old updates on reconnect. Pub/Sub or Streams, and why?",
+    answer: "Pub/Sub. It is fire-and-forget broadcast to whoever is subscribed at that instant, which is exactly the requirement — only currently-connected users matter, and a client that reconnects can simply fetch the current score rather than replay a history it does not need. A Stream would make you pay for retention, consumer groups and acknowledgement to deliver messages nobody wants.",
+    keyPoints: [
+      "Pub/Sub",
+      "the requirement is delivery to whoever is connected now; a missed message is worthless",
+      "current state can be re-fetched, so there is nothing to replay"
+    ],
+    explanation: "The deciding question is what a missed message costs. Here it costs nothing, because the message is a notification about state you can read at any time. When the message *is* the state — a payment, an order, a job — a missed one costs you everything, and you want a log."
+  },
+  {
+    id: "red-010",
+    topic: "redis · pub/sub",
+    type: "open",
+    question: "A subscriber disconnects at 10:00:00. A publisher sends three messages at 10:00:05. The subscriber reconnects at 10:00:10. What happens to those three messages under Pub/Sub? How does the answer change with Streams?",
+    answer: "Under Pub/Sub they are gone for that subscriber. Redis delivers to whoever is connected at publish time and keeps nothing — there is no buffer and no replay, so reconnecting gets you messages from 10:00:10 onward and nothing earlier. With a Stream those three entries are still in the stream, and the consumer resumes from its last id and reads all three, limited only by the stream's retention.",
+    keyPoints: [
+      "Pub/Sub: the three are lost for that subscriber; Redis never replays",
+      "Streams: the entries persist and the consumer catches up from its last position, subject to retention"
+    ],
+    explanation: "Pub/Sub has no memory at all — it is not a queue with an unlucky delivery policy, it is a broadcast bus. That is also why it handles slow subscribers badly: with no buffer to fall back on, a subscriber that cannot keep up is disconnected once its output buffer limit is reached."
+  },
+  {
+    id: "red-011",
+    topic: "redis · sorted sets",
+    type: "open",
+    question: "A game has millions of players, each with a score, and you constantly need the top 100. Design it with a Sorted Set: what is the member and what is the score?",
+    answer: "One Sorted Set, game:leaderboard, with the player id as the member and their points as the score. The top 100 is a single ZREVRANGE 0 99 — logarithmic in the size of the set plus the hundred you asked for, so it costs the same with a million players as with a thousand. A player's own position is ZREVRANK.",
+    keyPoints: [
+      "member = player id, score = points",
+      "top-N with ZREVRANGE (or ZRANGE … REV)",
+      "the cost does not grow with the number of players"
+    ],
+    explanation: "The reason this beats ORDER BY over a table is that the ordering is maintained on write rather than computed on read. You pay a little on every score update to make every leaderboard read cheap, which is the right trade when reads vastly outnumber writes — the shape of essentially every leaderboard."
+  },
+  {
+    id: "red-012",
+    topic: "redis · sorted sets",
+    type: "open",
+    question: "Henry has 7,000 points and is ranked 500th. He earns another 5,000. Conceptually, what happens when you update his score in the Sorted Set? Do you have to remove and reinsert everyone whose ranking changed?",
+    answer: "You issue one command — ZADD with the new score, or ZINCRBY 5000 — and Redis moves that one member to its new position. Nobody else is touched. Rank is not stored on a player, it is derived from position, so the players Henry overtook simply answer differently the next time anyone asks.",
+    keyPoints: [
+      "one ZADD/ZINCRBY moves the member; Redis maintains the ordering",
+      "no manual reinsertion — ranks are derived, not stored"
+    ],
+    explanation: "This is what makes the structure worth using. A rank column in a table means one player's gain is an UPDATE across every row above them; here the sorted set holds the order and rank is a query. The move costs logarithmic time in the number of players, not linear in the number of ranks crossed."
+  },
+
+  {
+    id: "red-scn-002",
+    topic: "redis · rate limiting",
+    type: "scenario",
+    scenario: "Your API allows each user 100 requests during any rolling 60-second period.",
+    steps: [
+      {
+        id: "red-013",
+        type: "open",
+        question: "Implement that with a Sorted Set. What is the member, what is the score, what do you remove, and what do you count?",
+        answer: "A Sorted Set per user, ratelimit:123. Each request adds a member unique to that request — a uuid, or a timestamp plus counter — scored by the current timestamp. On each request: ZREMRANGEBYSCORE from -inf up to now minus 60 seconds to drop what has aged out, ZCARD what remains, reject if that is already 100, otherwise ZADD the new request. Put a 60-second TTL on the key so idle users cost nothing.",
+        keyPoints: [
+          "member = a unique per-request id; score = the request timestamp",
+          "ZREMRANGEBYSCORE drops entries older than the window",
+          "ZCARD counts what is left and gates the request"
+        ],
+        explanation: "The member has to be unique per request rather than the timestamp itself — two requests in the same millisecond would otherwise collide into one member and you would undercount. The price of that precision is one entry stored per request per window, which is why the TTL matters and why generous limits get expensive."
+      },
+      {
+        id: "red-014",
+        type: "open",
+        question: "Another engineer proposes INCR user:123:10:30 for a fixed one-minute window instead. What is simpler about that, and what boundary problem does a fixed window introduce that a sliding one avoids?",
+        answer: "It is one integer per user per minute: INCR, compare, EXPIRE — constant time, a few bytes, nothing to sweep. The problem is the boundary. A user can send 100 requests at 10:30:59 and 100 more at 10:31:00 — 200 requests in about a second — because the counter resets on a wall-clock edge rather than following the user. A rolling window has no edge to exploit.",
+        keyPoints: [
+          "one counter per bucket: far cheaper in memory, and O(1)",
+          "the boundary burst — up to twice the limit across the edge between two windows"
+        ],
+        explanation: "Both are defensible; you are choosing what you are protecting. Fixed windows protect a budget, sliding windows protect an instantaneous rate. The middle ground people actually ship is a sliding-window counter: keep two fixed buckets and weight the previous one by how far into the current minute you are — most of the smoothing, almost none of the memory."
+      }
+    ]
+  },
+
+  {
+    id: "red-015",
+    topic: "redis · locks",
+    type: "open",
+    question: "Two application servers try to sell the last concert ticket at the same moment. How does a Redis distributed lock coordinate them, and what exactly does SET lock:ticket:123 <token> NX EX 30 accomplish?",
+    answer: "Both try to set the same key. NX means 'only if it does not already exist', so exactly one SET succeeds and that server holds the lock; the loser gets nil and retries or gives up. EX 30 makes the lock expire on its own so a holder that dies cannot block everyone forever, and the token is a value unique to the holder so it can later prove the lock is still its own before releasing it.",
+    keyPoints: [
+      "NX makes acquisition atomic — exactly one setter can win",
+      "EX 30 bounds how long a dead holder can keep it",
+      "the token identifies the owner, for a safe release"
+    ],
+    explanation: "It is the occupied sign on a cubicle door: one person flips it, everyone else waits, it flips back when they leave — with a caretaker who opens the door if nobody comes out in thirty seconds. Worth knowing the limit: a single-instance Redis lock is an optimisation, not a correctness guarantee. If two servers must never both sell the ticket, the database has to enforce that too."
+  },
+  {
+    id: "red-016",
+    topic: "redis · locks",
+    type: "open",
+    question: "Server A obtains a Redis lock and immediately crashes. Why is having an expiration on the lock essential?",
+    answer: "Because nothing else will ever remove it. The process that would have released it is gone, so without a TTL the key sits there forever and every other server waits on a lock whose owner no longer exists — a deadlock that outlives the incident and needs a human with redis-cli to clear. The expiry turns that into a bounded stall that heals itself.",
+    keyPoints: [
+      "a crashed holder never releases, so the lock is held forever",
+      "the TTL makes recovery automatic rather than manual"
+    ],
+    explanation: "The uncomfortable part is choosing the number. The TTL has to exceed the longest legitimate hold or you will expire a lock out from under a worker that is merely slow — which is the setup for the next failure. Real implementations answer this by renewing the lock while the work is still running rather than guessing generously up front."
+  },
+  {
+    id: "red-017",
+    topic: "redis · locks",
+    type: "open",
+    question: "Server A holds a lock with token ABC. Its lock expires while A is stalled, and Server B then acquires the same lock with token XYZ. A wakes up and blindly runs DEL lock. What catastrophic mistake just happened, and how does checking the token first prevent it?",
+    answer: "A deleted B's lock. A believed it still held the lock, but ownership had already expired and passed on, so the DEL released a lock A did not own — and now a third server can acquire it while B is still working, so two holders run at once. The fix is a conditional release: delete only if the stored value still equals your own token. That compare-and-delete has to be atomic — a Lua script — or you have just moved the same race into the gap between the GET and the DEL.",
+    keyPoints: [
+      "A released a lock owned by B, so two holders can now run concurrently",
+      "delete only if the value still matches your token",
+      "the check and the delete must be atomic, e.g. via Lua"
+    ],
+    explanation: "This is the standard argument for why a lock is not merely a key. Notice, though, that the token check makes the *release* safe without making A's *work* safe: A was stalled past its lease and may still be mid-transaction. A fencing token — a number that increases on each acquisition and is checked by the resource being protected — is what actually stops the stalled holder from writing."
+  },
+  {
+    id: "red-018",
+    topic: "redis · transactions",
+    type: "open",
+    question: "Conflicts are rare, so rather than locking a value before modifying it you decide to verify at commit time. Describe the workflow with WATCH, MULTI and EXEC, and say what happens if another client changes the watched key first.",
+    answer: "WATCH the key, read it, compute the new value in your own code, then MULTI, queue the write, and EXEC. If any watched key was modified by anyone between the WATCH and the EXEC, EXEC applies nothing and returns nil — so you never commit a decision based on a value that has since moved. You re-read and retry the whole sequence.",
+    keyPoints: [
+      "WATCH the key, read, compute, MULTI, queue, EXEC",
+      "EXEC aborts and returns nil if a watched key changed",
+      "the client retries the read-compute-commit cycle"
+    ],
+    explanation: "This is compare-and-swap with the comparison delegated to the server. Two things to remember: nothing is blocked, so a hot key under contention can starve a client that keeps retrying, and MULTI/EXEC is not a rollback — it is a batch that runs entirely or not at all, with no way to abort partway through on an error."
+  },
+  {
+    id: "red-019",
+    topic: "redis · transactions",
+    type: "open",
+    question: "One approach acquires a lock before touching anything; the other reads freely and only verifies at commit time that nobody interfered. Which is pessimistic concurrency and which is optimistic, and why do those names make sense?",
+    answer: "Taking the lock first is pessimistic: it assumes a conflict is likely enough to be worth preventing, so it excludes everyone else up front. The WATCH-and-verify approach is optimistic: it assumes a conflict probably will not happen, does the work without coordinating, and checks at the end whether that assumption held — accepting a retry as the price when it did not.",
+    keyPoints: [
+      "lock first = pessimistic; verify at commit = optimistic",
+      "the names describe each one's assumption about how likely a conflict is"
+    ],
+    explanation: "The choice follows contention rather than taste. Under low contention optimistic wins outright — no lock traffic, no leases, no stalled-holder problem. Under high contention it degrades badly, because every retry is work thrown away, and the pessimistic version's queueing starts to look like a feature."
+  },
+  {
+    id: "red-020",
+    topic: "redis · transactions",
+    type: "open",
+    question: "Your rate limiter needs to remove old requests, count what is left, and possibly insert the new one. Why could running those as three unrelated Redis commands introduce concurrency problems, and why might a Lua script help?",
+    answer: "Because other clients run in between. Two requests from the same user can both trim, both count 99, and both add — letting 101 through a limit of 100. The three commands are individually atomic but the decision spanning them is not. A Lua script is sent as one unit and runs to completion with no other command interleaving, so trim, count and conditional add become a single atomic operation.",
+    keyPoints: [
+      "another client can interleave between the steps, so the count you acted on is already stale",
+      "the sequence, not each command, is what needs to be atomic",
+      "EVAL runs the whole script without interleaving"
+    ],
+    explanation: "The general lesson is that atomic commands do not compose into atomic transactions. Redis offers three ways out — MULTI/EXEC when the steps do not depend on each other's results, WATCH when you can afford to retry, and Lua when you need to branch on a value mid-sequence. A rate limiter needs the third, because 'maybe add' depends on the count."
+  },
+  {
+    id: "red-021",
+    topic: "redis · cluster",
+    type: "open",
+    question: "You have three Redis primaries and your application asks for user:123. Walk the chain: key → hash → hash slot → node. Why does Redis introduce hash slots instead of having the client search every node?",
+    answer: "CRC16 of the key modulo 16384 gives a slot number; each primary owns a range of those 16,384 slots; so the client computes the slot itself and goes straight to the one node that owns it — one hop, no search. Slots exist as a layer of indirection: ownership is assigned per slot rather than per key, so a whole slot can move between nodes without the client knowing anything about individual keys.",
+    keyPoints: [
+      "CRC16(key) mod 16384 → slot → the node owning that slot range",
+      "the client computes it locally and goes direct, rather than asking every node",
+      "slots decouple key placement from node count, so ownership can move in bulk"
+    ],
+    explanation: "The alternatives are worse: a directory mapping a hundred million keys to nodes is enormous and constantly changing, and broadcasting to every node makes every request as slow as the slowest node. 16,384 fixed buckets is small enough for every client to hold the whole map and fine-grained enough to divide among nodes. Hash tags — user:{123}:profile — let you force related keys into the same slot when you need them together."
+  },
+  {
+    id: "red-022",
+    topic: "redis · cluster",
+    type: "open",
+    question: "Your three-node cluster is running out of capacity, so you add a fourth node. Does Redis need to move individual requests around? Explain what happens to the hash slots and their keys.",
+    answer: "No. Some slots are reassigned from the existing nodes to the new one and the keys hashing into those slots migrate with them — roughly a quarter of the slots move, so roughly a quarter of the keys do. Everything else stays exactly where it was. Clients pick up the new map, and during the migration a MOVED or ASK redirection points them at the right node.",
+    keyPoints: [
+      "slots are reassigned in bulk and their keys migrate with them",
+      "only a fraction of keys move — nothing is relocated per key or per request",
+      "clients follow MOVED/ASK redirects and refresh their slot map"
+    ],
+    explanation: "This is the payoff for the slot layer. Plain modulo-by-node-count hashing would remap nearly every key when the count goes from three to four — a full cache invalidation and a stampede against your database. Fixed slots turn resharding into an ownership change over a small, movable unit."
+  },
+  {
+    id: "red-023",
+    topic: "redis · replication",
+    type: "open",
+    question: "Your Redis primary accepts a write and tells the client it succeeded. Immediately afterward the machine dies, before the replica received that write, and the replica is promoted. What happened to the write, and what does that teach you about Redis as a system of record?",
+    answer: "It is gone. Redis replication is asynchronous by default: the primary answers the client as soon as it has applied the write locally, without waiting for any replica, so a failover between the acknowledgement and the propagation loses it — and the client was told it succeeded, so the loss is silent. Treat Redis as a cache or a derived view and keep the authoritative copy somewhere that only acknowledges after a durable, replicated commit.",
+    keyPoints: [
+      "the acknowledged write is lost, because replication is asynchronous",
+      "the client was told it succeeded, so nothing surfaces the loss",
+      "Redis is not a system of record; authority belongs in a durable store"
+    ],
+    explanation: "WAIT lets you block until N replicas have acknowledged, which narrows the window without closing it — it is not a synchronous commit and it does not help in a partition where the old primary keeps taking writes. The general lesson travels well beyond Redis: 'the server said OK' means exactly as much as whatever the server checked before saying it."
+  },
+  {
+    id: "red-024",
+    topic: "redis · replication",
+    type: "open",
+    question: "Your Redis primary is overwhelmed by reads but handles writes comfortably. How could replicas help, and what consistency tradeoff do you accept by reading from them?",
+    answer: "Send read traffic to the replicas and keep writes on the primary; each replica holds a full copy, so read capacity scales with the number of replicas while write capacity stays where it is. The tradeoff is stale reads: replication is asynchronous, so a replica can lag, and a client that writes and then immediately reads from a replica may not see its own write.",
+    keyPoints: [
+      "reads go to replicas, writes stay on the primary — read throughput scales out",
+      "stale reads, because replicas lag the primary",
+      "read-your-own-writes is not guaranteed"
+    ],
+    explanation: "Read-after-write is the failure users actually notice: they change a setting, the page reloads off a lagging replica, and it looks like the change was lost. The usual fixes are to route reads to the primary for a short window after a write, or to pin a session to the primary while it matters. And note this scales reads only — sharding is what scales writes."
+  },
+  {
+    id: "red-025",
+    topic: "redis · durability",
+    type: "open",
+    question: "Explain the conceptual difference between Redis RDB snapshots and AOF. If the machine crashes, why might either configuration lose recently acknowledged writes, depending on its settings?",
+    answer: "RDB writes a point-in-time snapshot of the whole dataset every so often; AOF appends each write command to a log that can be replayed on restart. A crash under RDB loses everything since the last snapshot, which can be minutes. AOF loses less, but only as little as its fsync policy allows: the default flushes about once a second, so roughly a second of acknowledged writes can still be sitting in the OS buffer. Flushing on every write is the durable setting and costs a great deal of throughput.",
+    keyPoints: [
+      "RDB = periodic point-in-time snapshot; AOF = append-only log of write commands",
+      "RDB loses everything since the last snapshot",
+      "AOF's loss window is set by its fsync policy — one second by default"
+    ],
+    explanation: "The knob is the one every storage system has: how long you are willing to hold an acknowledged write in volatile memory before it reaches disk. Redis defaults to fast rather than durable, which is right for a cache and wrong for a ledger. Most production setups run both — AOF for recovery granularity, RDB for fast restarts and backups."
+  },
+  {
+    id: "red-026",
+    topic: "redis · caching",
+    type: "open",
+    question: "You cache product:123 for five minutes. What does the TTL accomplish, and what should happen when someone requests that product after the TTL has expired?",
+    answer: "It bounds staleness — a promise that the cached copy is never more than five minutes behind PostgreSQL, which buys you correctness without having to invalidate on every write. Once it expires the key is simply gone: a read behaves exactly as it would for a key that never existed, so the application takes the miss, reads the source of truth, repopulates Redis and returns the fresh value.",
+    keyPoints: [
+      "the TTL bounds how stale the cached value can be",
+      "after expiry the key behaves as though it does not exist",
+      "the read falls through to the database and repopulates the cache"
+    ],
+    explanation: "Worth knowing how expiry actually happens: Redis removes an expired key lazily when it is next touched, plus a background sampler — 'expired' is about what reads see, not a scheduled deletion. And the miss path is not free. If a popular key expires with a thousand requests in flight, they all miss at once and hit the database together; that is the thundering herd, and it is why hot keys often get early or jittered refresh."
+  },
+  {
+    id: "red-027",
+    topic: "redis · memory",
+    type: "open",
+    question: "Your Redis cache has 64 GB of RAM and eventually fills it. Explain why TTL expiration and memory eviction are different ideas. What does an eviction strategy such as LRU try to accomplish?",
+    answer: "TTL expiry is about time and correctness: the key goes because it is too old to trust, whether or not memory is tight. Eviction is about space: Redis has hit maxmemory and must delete something to accept the next write, so it removes keys that have not expired and would otherwise still be perfectly valid. LRU picks the least recently used key on the bet that what has not been read lately will not be read soon — keeping the hot working set resident and giving up the cold tail.",
+    keyPoints: [
+      "TTL removes a key for being stale; eviction removes it because memory is needed",
+      "eviction deletes valid, unexpired data",
+      "LRU keeps the hot working set and discards what has not been used recently"
+    ],
+    explanation: "The policy matters more than people expect: allkeys-lru will evict anything, volatile-lru only touches keys that carry a TTL, and noeviction turns a full cache into write errors — which is the right setting when Redis holds something you cannot afford to drop. Redis's LRU is sampled rather than exact, and LFU is often the better bet when a small set of keys is read far more often than the rest."
+  },
+  {
+    id: "red-028",
+    topic: "redis · cluster",
+    type: "open",
+    question: "You have a 100-node Redis cluster holding 100 million products. A celebrity mentions one, and suddenly 40% of all cache traffic goes to product:8675309. Why does having 100 nodes not solve this, and what would you do about it?",
+    answer: "Because that key hashes to one slot, which lives on one node. Sharding spreads keys, not requests for a single key, so one shard takes 40% of your traffic while the other 99 idle — and adding nodes cannot split a key that is already alone. Remedies: cache the value in the application process for a second or two so most requests never reach Redis; serve its reads from replicas; or write it under N suffixed keys that land in different slots and have clients read one at random.",
+    keyPoints: [
+      "the key lives on a single shard, so sharding cannot spread requests for one key",
+      "at least one remedy: in-process caching, read replicas, or copies across several keys"
+    ],
+    explanation: "Local caching is usually the biggest and cheapest win, since a one-second in-process TTL collapses thousands of requests per server into one. The N-copies trick works but you now own the write fan-out and the fact that the copies can disagree briefly. Detection matters too — redis-cli --hotkeys and the LFU-based OBJECT FREQ will tell you which key is on fire."
+  },
+  {
+    id: "red-029",
+    topic: "redis · performance",
+    type: "open",
+    question: "Your application needs 100 independent Redis values. If you send one request, wait for the response, then send the next, 100 times over, what is likely to dominate the latency? How does pipelining improve this without making any individual command faster?",
+    answer: "Network round trips. Redis will service each command in microseconds, but each one costs a full round trip — at half a millisecond that is 50 ms of waiting and almost no work. Pipelining writes all 100 commands to the socket without waiting for replies, then reads the 100 replies, so you pay roughly one round trip instead of a hundred. Each command still takes exactly as long as before; what you removed was the idle time between them.",
+    keyPoints: [
+      "round-trip latency dominates — the commands themselves take microseconds",
+      "pipelining sends many commands without waiting, then reads all the replies",
+      "it removes waiting, not per-command execution time"
+    ],
+    explanation: "MGET does the same thing for the special case of plain string reads, and is better still. Two limits worth knowing: pipelined commands are not atomic — other clients interleave between them — and a pipeline of a hundred thousand commands holds a large reply buffer in memory, so batch in chunks."
+  },
+  {
+    id: "red-030",
+    topic: "redis · architecture",
+    type: "open",
+    question: "Design the Redis layer for an Uber-like service. Pick a structure or capability for each of these, and say why:\n· fast driver-session lookups\n· nearby-driver search\n· API rate limiting\n· real-time location notifications that can be missed\n· reliable background payment jobs that cannot disappear\n· a counter for rides completed today\n· coordination so two workers never claim the same scarce resource",
+    answer: "Driver sessions → a Hash per session, so any stateless server can read it and update one field. Nearby drivers → a geospatial index (GEOADD/GEOSEARCH), which is a Sorted Set scored by geohash and answers radius queries directly. Rate limiting → a Sorted Set per user for a rolling window, or a String counter per bucket if a fixed window is good enough. Live location notifications → Pub/Sub, since they are disposable and only current subscribers matter. Payment jobs → a Stream with a consumer group, so a job stays pending until acknowledged and can be claimed by another worker after a crash. Rides today → a String with INCR on a date-keyed counter. Scarce-resource coordination → a distributed lock with SET NX EX and a token, remembering that the authoritative store should still enforce the invariant.",
+    keyPoints: [
+      "driver sessions → Hash",
+      "nearby drivers → geospatial index / GEOSEARCH",
+      "rate limiting → Sorted Set (sliding) or String counter (fixed)",
+      "missable location notifications → Pub/Sub",
+      "payment jobs → Stream with a consumer group",
+      "rides completed today → String with INCR",
+      "scarce-resource coordination → distributed lock (SET NX EX)"
+    ],
+    explanation: "The through-line is what a lost message costs, and the shape of the read. Locations are disposable and constantly replaced, so a bus is fine; payments are not, so you need a log with acknowledgements. Note where the answer hedges: the ride counter wants the date in the key — rides:completed:2026-08-11 — so 'today' is well defined and old counters expire, and the lock is an optimisation. If two workers claiming one resource would be a real correctness failure, a unique constraint in the database is what actually prevents it."
+  },
+
+  /* ---------------------------------------------------------------------------
+     ELASTICSEARCH — distributed search, what the index does at write time versus
+     read time, and how documents get modelled for the queries you actually run.
+     ------------------------------------------------------------------------ */
+  {
+    id: "els-001",
+    topic: "elasticsearch · distributed search",
+    type: "open",
+    question: "You have 3 shards. A user searches for 'machine learning books' and asks for the top 10. Walk through what happens from the moment Elasticsearch receives the query until those 10 documents come back. Where does scoring happen, and who decides the global top 10?",
+    answer: "The node that receives the request becomes the coordinator and fans the query out to all three shards. Each shard searches only its own documents, scores the matches with the same scoring logic, sorts them locally and returns its own top candidates — ids and sort values, not whole documents. The coordinator merges those three ranked lists into one global ordering, keeps the best 10, and then fetches the actual documents for just those 10. So scoring happens on each shard, and only the coordinator can know the global ranking.",
+    keyPoints: [
+      "the coordinating node fans out to all shards; each searches only its own documents",
+      "scoring happens locally on each shard",
+      "the coordinator merges the shard-level lists to produce the global top 10"
+    ],
+    explanation: "This is the query-then-fetch split, and it exists to move as little data as possible: the scatter phase moves ids and scores, and only the surviving ten documents are actually retrieved. One consequence worth knowing — because each shard scores using its own local term statistics, scores are not strictly comparable across shards. With a reasonable number of documents this washes out, and dfs_query_then_fetch is the fix when it does not."
+  },
+  {
+    id: "els-002",
+    topic: "elasticsearch · pagination",
+    type: "open",
+    question: "You have 5 shards and a page size of 20. A user requests from: 9980, size: 20. Explain why that is substantially more expensive than from: 0, size: 20. What work does each shard do, what does the coordinator do, and what gets thrown away?",
+    answer: "To know which documents are globally 9,981st to 10,000th, every shard has to return its own top 10,000 — because any of them could contain all of them. So five shards each build and sort a 10,000-entry list and ship it to the coordinator, which merges 50,000 entries, discards the first 9,980 of the merged order, and returns 20. Almost all of that sorting, transferring and merging is thrown away, and the cost grows with the page number rather than the page size.",
+    keyPoints: [
+      "each shard must return from + size — its own top 10,000, not just 20",
+      "the coordinator merges shards × (from + size) entries and discards the first 9,980",
+      "the work scales with how deep the page is, not with how many results are wanted"
+    ],
+    explanation: "This is why index.max_result_window defaults to 10,000 — it is a guardrail, not an arbitrary limit, and raising it moves the memory pressure onto the coordinator. The deeper problem is that offset pagination asks a question no distributed system answers cheaply: 'skip the first N of a global order' requires materialising that global order first."
+  },
+  {
+    id: "els-003",
+    topic: "elasticsearch · pagination",
+    type: "open",
+    question: "The product team replaces deep from/size pagination with search_after. What must the client send with its next request, and why does that let Elasticsearch avoid most of the work above?",
+    answer: "The client sends back the sort values of the last document on the previous page — and the sort must be deterministic, so it needs a tiebreaker such as _id or _shard_doc. Those values act as a cursor: each shard seeks to that position in its sorted order and collects only the next 20, so no shard builds a 10,000-entry list and the coordinator merges 5 × 20 instead of 5 × 10,000. The cost is the same on page 500 as on page 1.",
+    keyPoints: [
+      "the sort values of the last document from the previous page, with a tiebreaker for a total order",
+      "shards resume from that cursor rather than rebuilding and discarding everything before it",
+      "cost becomes independent of how deep you are"
+    ],
+    explanation: "The trade you are making is that you can no longer jump: search_after gives sequential paging only, which is why it fits infinite scroll and not a page-number bar. It is the same reason keyset pagination beats OFFSET in SQL — 'continue after this value' is answerable from an index, 'skip 9,980 rows' is not."
+  },
+  {
+    id: "els-004",
+    topic: "elasticsearch · pagination",
+    type: "open",
+    question: "You are using search_after, but documents are being added and updated while a user pages, and they start seeing duplicates and missing results. Why does that happen, and what does a Point-in-Time snapshot change? What does PIT solve that search_after alone does not?",
+    answer: "search_after does not freeze anything — each request runs against whatever the index looks like at that moment. A document inserted before your cursor pushes everything down, so a result you already saw shifts past the cursor and appears again; a deletion or a re-scored update pulls things up, so a result you had not reached yet slides above the cursor and is skipped. A PIT pins every request in the sequence to one consistent view of the index, so the ordering the cursor is walking stops moving underneath it. search_after solves efficiency; PIT solves consistency.",
+    keyPoints: [
+      "the index keeps changing between requests, so positions shift under the cursor",
+      "shifts cause both duplicates and skipped results",
+      "PIT pins all requests to one consistent view — search_after is about cost, PIT is about consistency"
+    ],
+    explanation: "The two are complementary rather than alternatives, which is the thing to keep. Note what a PIT costs: it holds the underlying segments open for its keep_alive, so the disk they occupy cannot be reclaimed while it lives — long-lived PITs are a real resource commitment, and you close them when the user stops scrolling."
+  },
+  {
+    id: "els-005",
+    topic: "elasticsearch · inverted index",
+    type: "open",
+    question: "Your cluster contains 100 million books and someone searches for 'distributed systems'. Explain why Elasticsearch does not need to scan 100 million documents. What work done at indexing time makes the query possible?",
+    answer: "At indexing time Elasticsearch built an inverted index: rather than only mapping each document to its terms, it maps each term to the sorted list of documents containing it. So the query looks up the posting list for 'distributed' and the one for 'systems', intersects or unions those two lists, and works only from that candidate set — which might be a few thousand books. The 100 million documents that contain neither term are never examined, because nothing ever points at them.",
+    keyPoints: [
+      "an inverted index built at index time maps term → the documents containing it",
+      "the query reads the posting lists for the query terms and works from those candidates only",
+      "documents that match nothing are never touched"
+    ],
+    explanation: "The trade is stated plainly by the name: you did the work up front, at write time, so reads are cheap. That is also why indexing is the expensive half of Elasticsearch, why reindexing hurts, and why a field you never search should not be indexed at all. Posting lists being sorted is what makes the intersection a merge rather than a lookup per document."
+  },
+  {
+    id: "els-006",
+    topic: "elasticsearch · scoring",
+    type: "open",
+    question: "A developer says: 'BM25 ranks our documents, so Elasticsearch must calculate BM25 scores when documents are indexed.' Do you agree? Separate what Elasticsearch does at indexing time from what it does at query time.",
+    answer: "No. A BM25 score is a property of a document-query pair, and the query does not exist yet at indexing time. What indexing does is prepare the inputs: analyse and tokenise the text, normalise the terms, build the posting lists, and store the statistics BM25 needs — term frequency per document, document length, and the document frequency of each term. At query time Elasticsearch takes the query's terms, pulls those precomputed statistics for the candidate documents, and computes the score then. Indexing prepares the ingredients; querying computes the score.",
+    keyPoints: [
+      "no — scoring is per document-query pair and happens at query time",
+      "indexing analyses text and stores term frequencies, document lengths and document frequencies",
+      "the query supplies the terms; the score is computed from the stored statistics"
+    ],
+    explanation: "A good way to see it is that changing the query changes every score without touching a single document, while changing the similarity settings requires a reindex only because the stored statistics change. It also explains the cross-shard scoring wrinkle: document frequency is a per-shard statistic, so the same document can score slightly differently depending on which shard it landed in."
+  },
+  {
+    id: "els-007",
+    topic: "elasticsearch · mappings",
+    type: "open",
+    question: "Your Book object has 120 fields, but users only search, filter, sort or aggregate on 15 of them. Someone proposes dynamically indexing all 120 because 'we might need them someday'. What are the tradeoffs, and how would you decide what actually gets indexed?",
+    answer: "Every indexed field costs disk, indexing CPU and heap, and the mapping itself becomes hard to change later. I would decide from the query patterns: a field that is searched needs a text mapping with an analyser, one that is filtered, sorted or aggregated needs a keyword or numeric doc-values mapping, and the remaining 105 can stay in _source with index: false — still returned with the document, just not searchable. Turning dynamic mapping off, or setting it to strict, stops the other 105 from quietly becoming indexed fields the first time someone sends an unexpected key.",
+    keyPoints: [
+      "indexed fields cost storage, indexing CPU, memory, and mapping rigidity",
+      "decide from the query pattern: searched vs filtered/sorted/aggregated vs merely returned",
+      "unsearched fields can live in _source with index: false; disable or restrict dynamic mapping"
+    ],
+    explanation: "The 'someday' argument is weaker than it sounds, because you can reindex when someday arrives — you already have the source of truth. What you cannot easily undo is a mapping explosion: dynamic mapping over user-supplied keys is the classic way to end up with tens of thousands of fields and a cluster state nobody can update."
+  },
+
+  {
+    id: "els-scn-001",
+    topic: "elasticsearch · modelling",
+    type: "scenario",
+    scenario: "You are designing the Elasticsearch document for a book. Whenever users retrieve a book, they also need related data alongside it, and you are deciding what to embed in the book document and what to keep separate.",
+    steps: [
+      {
+        id: "els-008",
+        type: "open",
+        question: "The related data is publisher information, which almost never changes. Would you embed it in the book document or keep it separate? Answer in terms of read and update patterns, not just 'denormalisation is faster'.",
+        answer: "Embed it. The read pattern is that publisher data is needed on essentially every book retrieval, and Elasticsearch has no join, so keeping it separate means a second lookup or an application-side stitch on every search. The update pattern is what makes that safe: publisher data almost never changes, so the duplication you are taking on is rarely invalidated — and when a publisher does change, reindexing the affected books is a rare, batchable job rather than continuous churn.",
+        keyPoints: [
+          "embed it",
+          "read pattern: needed on every book read, and there is no join to fall back on",
+          "update pattern: it changes rarely, so the duplicated copy is rarely invalidated"
+        ],
+        explanation: "The reason to phrase it as read pattern versus update pattern is that denormalisation is not a speed trick, it is a bet: you are trading write amplification for read simplicity. The bet pays when reads are frequent and writes are rare, which is exactly this case — and it is the same bet with the opposite answer when the embedded data is volatile."
+      },
+      {
+        id: "els-009",
+        type: "open",
+        question: "Now the same question for reviews instead. A popular book gets 100 new reviews a minute, and reviews can be edited independently. Why does embedding every review inside the book document become a problem, and what changes when reviews get their own index?",
+        answer: "Because Elasticsearch documents are immutable — an update rewrites and reindexes the whole document. Embedding reviews means one new review on a popular book rewrites the entire book document, including all its existing reviews, a hundred times a minute; the document grows without bound, every rewrite invalidates segments and feeds merge pressure, and concurrent edits to different reviews conflict at the document level. Moving reviews to their own index makes each review its own small document that can be written or edited independently, leaves the book document stable, and lets the two scale separately. The cost is that book-plus-reviews now takes a second query and application-side composition.",
+        keyPoints: [
+          "documents are immutable, so every new review rewrites the whole book document",
+          "write amplification, unbounded document growth, merge pressure and update conflicts",
+          "a separate index makes reviews independently writable; the price is a second lookup"
+        ],
+        explanation: "This is the same decision as the publisher one with the update pattern reversed, which is why the two make sense as a pair rather than as separate rules. Worth knowing the middle options: nested fields keep the data in one document but still rewrite it on every change, and join fields avoid the rewrite at real query cost — neither rescues you from a hundred writes a minute."
+      }
+    ]
+  },
+
+  {
+    id: "els-010",
+    topic: "elasticsearch · architecture",
+    type: "open",
+    question: "Design book search for an Amazon-like application. PostgreSQL is the source of truth. Users need full-text search, filtering by category and price, sorting, reviews, and infinite-scroll pagination. Cover: what gets indexed, how PostgreSQL changes reach Elasticsearch, how you model books versus reviews, how a search executes across shards, and which pagination strategy you choose.",
+    answer: "PostgreSQL stays authoritative for books, prices, inventory, reviews and anything transactional; Elasticsearch is a search-optimised read model that can be rebuilt from it. Changes flow one way — CDC off the write-ahead log into Kafka, or an outbox table drained by an indexer — into denormalised book documents holding the fields needed for search (title, author, description), for filtering and sorting (category as a keyword, price as a numeric), and the handful of fields the results list displays. Books and reviews are separate indices, because reviews change constantly and books do not; a review count and an average rating are denormalised onto the book so results can be filtered and sorted without a join. A search fans out from the coordinating node to every shard, each scoring its own documents locally and returning candidates, and the coordinator merges them into the global ranking. For infinite scroll, search_after with a tiebreaker, and a PIT when the catalogue is being reindexed while a user scrolls.",
+    keyPoints: [
+      "PostgreSQL is the source of truth; Elasticsearch is a rebuildable read model",
+      "changes propagate via CDC / an outbox / an indexing pipeline, one direction only",
+      "index only what is searched, filtered, sorted or displayed — denormalised into a book document",
+      "books and reviews in separate indices, with rating aggregates denormalised onto the book",
+      "query-then-fetch across shards, merged into a global ranking by the coordinator",
+      "search_after (with PIT) for infinite scroll rather than deep from/size"
+    ],
+    explanation: "The load-bearing decision is the first one: naming Elasticsearch a derived index rather than a database means you can always drop and rebuild it, which is what makes mapping changes and reindexes routine instead of frightening. The parts most people leave out are the propagation lag — search is eventually consistent with checkout, so the price shown may need re-validating at purchase — and what happens when the pipeline stalls, which is the failure that quietly serves a stale catalogue for hours."
   }
 
 ];

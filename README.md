@@ -11,10 +11,11 @@ are one setup with a chain of follow-ups, each dealt only once you have answered
 Cards you miss come back a couple of minutes later and keep coming back until they stick;
 [FSRS-5](#spaced-repetition-fsrs-5) schedules everything else across sessions. **Fast** mode
 only stops you when you get one wrong. The `←` at the top left reopens anything you have
-already answered.
+already answered. The start screen has a [topic picker](#quiz-by-topic), so a run can be the
+whole deck or just one subject.
 
-The deck that ships with it is a 171-card drill on **metrics and ML systems**. The metrics
-half splits into four families:
+The deck that ships with it is 211 cards over three subjects: **metrics and ML systems**,
+**Redis**, and **Elasticsearch**. The metrics half splits into four families:
 
 | Family | What it measures | Examples in the deck |
 | --- | --- | --- |
@@ -37,6 +38,32 @@ The `systems` family covers the machinery around the model rather than the model
 | `systems · architecture` | two-tower retrieval, ANN search, DeepFM under a latency budget, RAG cross-encoders |
 | `systems · bias` | position bias, IPW and propensity clipping, FairPairs, EM, filter bubbles |
 | `systems · cold start` | bandit exploration for items, explicit onboarding for users |
+
+The `redis` and `elasticsearch` families are written cards throughout — every one of them
+[wants an answer in your own words](#written-cards), because the point of them is being able
+to say *why* you'd pick a Stream over a List, not recognising that you would.
+
+| Family | Groups |
+| --- | --- |
+| **redis** (30) | caching, strings, hashes, sets, sorted sets, queues, streams, pub/sub, transactions, locks, cluster, replication, durability, memory, performance, architecture |
+| **elasticsearch** (10) | distributed search, pagination (`from`/`size`, `search_after`, PIT), the inverted index, scoring, mappings, modelling, architecture |
+
+---
+
+## Quiz by topic
+
+The start screen has a chip per family with its card count, plus **All**. Tapping a family
+while everything is selected narrows the run to just it — "quiz me on Redis" being the thing
+you usually want — and tapping more adds them. Turning the last one off falls back to All
+rather than leaving you with an empty deck. The choice sticks between launches.
+
+Everything downstream follows the selection: the card count under the buttons, **Review due
+· N**, and what `Start the deck`, `Shuffle first` and `Run it again` deal.
+
+The chips are built from whatever `questions.js` contains — the family is the part of `topic`
+before the `·`, so adding `kafka · consumer groups` cards puts a `kafka` chip on the start
+screen with no other change. A stored selection naming a family the deck no longer has is
+quietly dropped.
 
 ---
 
@@ -398,7 +425,5 @@ Only `transform` and `opacity` animate. `prefers-reduced-motion` is respected.
 - **Confidence tap.** A low/med/high tap before committing, stored alongside the result, so
   the summary can show a calibration curve and a Brier score — which would make the app an
   instance of one of its own questions.
-- **Multiple decks with a topic filter.** `topic` is already on every card; a start-screen
-  chip row that filters `QUESTIONS` before the deck is built would be maybe 30 lines.
 - **Per-topic breakdown on the summary screen.** Accuracy by family would tell you whether
   the gap is in offline eval or in experimentation.

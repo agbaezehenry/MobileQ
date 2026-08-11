@@ -35,11 +35,11 @@
   <!-- ====================================================================== -->
   <section class="screen screen--start" id="screen-start">
     <div class="screen__inner screen__inner--scroll screen__inner--start">
-      <p class="eyebrow">a drill in four families</p>
+      <p class="eyebrow">metrics · systems · redis · elasticsearch</p>
       <h1 class="display">Metric<br />Board</h1>
       <p class="lede">
-        Business, offline, online, training. Swipe left or right to answer,
-        swipe up when you'd rather be told.
+        Swipe left or right to answer, swipe up when you'd rather be told.
+        Pick a topic below, or take the lot.
       </p>
 
       <ul class="legend">
@@ -48,6 +48,13 @@
         <li><span class="legend__key legend__key--s">↑</span> skip — flags it for review</li>
         <li><span class="legend__key legend__key--w">✎</span> some cards want it in your own words</li>
       </ul>
+
+      <!-- ---- topics -------------------------------------------------------
+           One chip per family, plus All. Tapping a family narrows the run to
+           it; tapping more adds them. Chips are built in app.js from whatever
+           topics questions.js actually contains. -->
+      <p class="pick-h">quiz by topic</p>
+      <div class="topics" id="topics" role="group" aria-label="Topics"></div>
 
       <!-- ---- pace ---------------------------------------------------------
            Slow stops on every card. Fast only stops when you were wrong, and
