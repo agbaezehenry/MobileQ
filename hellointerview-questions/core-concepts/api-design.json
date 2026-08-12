@@ -1,0 +1,282 @@
+{
+  "section": "core-concepts",
+  "subsection": "API Design",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/api-design",
+  "concepts": [
+    "API design time budget in interviews (~5 minutes)",
+    "API design scrutiny varies by role (heavier for frontend/product and junior candidates)",
+    "REST as the default protocol for standard CRUD",
+    "GraphQL eliminates over-fetching for divergent clients",
+    "GraphQL eliminates under-fetching / request waterfalls",
+    "GraphQL enables frontend iteration without backend endpoint changes",
+    "GraphQL N+1 query problem and dataloader fix",
+    "GraphQL field-level authorization vs REST endpoint-level",
+    "gRPC for high-volume internal service-to-service calls",
+    "Protocol Buffers compile-time cross-language type safety",
+    "gRPC bidirectional streaming over HTTP/2",
+    "RPC is action-oriented; REST is resource-oriented",
+    "Practical split: public REST, internal gRPC",
+    "WebSockets/SSE replace request-response for real-time features",
+    "SSE for one-way server push vs WebSockets for bidirectional communication",
+    "Resources are plural nouns; actions live in HTTP methods, not verb URLs",
+    "Nested paths for required relationships vs flat paths with query-param filters",
+    "POST non-idempotency: retries create duplicates",
+    "Which HTTP methods are idempotent and safe to auto-retry",
+    "PUT replaces the whole resource; PATCH is a partial update",
+    "Data placement: path = required identity, query = optional modifier, body = complex payload",
+    "4xx (client error) vs 5xx (server error) classification",
+    "201 Created vs 200 OK for resource creation",
+    "Offset pagination instability under live inserts",
+    "Cursor pagination cannot jump to an arbitrary page",
+    "Cursor pagination mechanics: opaque next_cursor returned with each page",
+    "URL versioning vs header versioning",
+    "Authentication (identity) vs authorization (permission)",
+    "API keys are for server-to-server/third-party access, not end users",
+    "JWT statelessness removes central session lookups",
+    "RBAC: role-scoped permissions plus resource-ownership checks",
+    "Endpoint-specific rate limiting with 429 responses",
+    "Rate limiting is enforced at the gateway/middleware layer"
+  ],
+  "question_count": 33,
+  "questions": [
+    {
+      "id": "api-design-01",
+      "type": "scenario",
+      "concept": "API design time budget in interviews (~5 minutes)",
+      "question": "In a 45-minute mock system design interview for a food-delivery platform, the candidate spends 15 minutes writing exhaustive endpoint definitions with complete request and response JSON for every route, then rushes through storage and scaling in the time left. The interviewer's feedback is negative even though every endpoint was correct. What went wrong?",
+      "answer": "The candidate blew the time budget: API design deserves roughly five minutes and a reasonable sketch, because interviews are graded on architecture depth. Overspending on endpoints starved the part of the interview that actually matters."
+    },
+    {
+      "id": "api-design-02",
+      "type": "true_false",
+      "concept": "API design scrutiny varies by role (heavier for frontend/product and junior candidates)",
+      "question": "In a system design interview, the interviewer's scrutiny of your API design is roughly the same whether you are interviewing for a backend infrastructure role or a frontend/product-focused role.",
+      "answer": "False — API design carries more weight for frontend/product-focused and junior candidates; most interviewers otherwise want a reasonable sketch so the time can go to the deeper architecture."
+    },
+    {
+      "id": "api-design-03",
+      "type": "scenario",
+      "concept": "REST as the default protocol for standard CRUD",
+      "question": "A three-person startup is building a recipe-sharing site with a single web client and plain create/read/update/delete operations on recipes and comments. One engineer pushes to launch on GraphQL and gRPC to be future-proof. Which protocol fits this product, and why?",
+      "answer": "REST. It is the default for standard CRUD with one client: it maps directly onto HTTP semantics and database operations with no extra machinery. GraphQL and gRPC solve multi-client flexibility and internal performance problems this product does not have."
+    },
+    {
+      "id": "api-design-04",
+      "type": "scenario",
+      "concept": "GraphQL eliminates over-fetching for divergent clients",
+      "question": "A social network serves both a mobile app and a web analytics dashboard from the same REST endpoints. The profile endpoint returns over 40 fields, so mobile users on slow connections download data only the dashboard ever displays, and the mobile team keeps filing requests for new stripped-down endpoints. What should the team change, and why?",
+      "answer": "Adopt GraphQL. Each client specifies exactly the fields it needs against one endpoint, so mobile fetches a few fields while the dashboard fetches everything — over-fetching disappears without multiplying bespoke endpoints."
+    },
+    {
+      "id": "api-design-05",
+      "type": "scenario",
+      "concept": "GraphQL eliminates under-fetching / request waterfalls",
+      "question": "An event-discovery mobile app renders its detail screen by calling four REST endpoints in sequence — event, then venue, then tickets, then reviews — so the screen paints slowly on cellular connections. The data model itself is fine; the problem is the number of round trips. Which API style addresses this, and how?",
+      "answer": "GraphQL. The client sends one query describing the whole nested shape (event with its venue, tickets, and reviews) and receives it in a single round trip, fixing the under-fetching waterfall."
+    },
+    {
+      "id": "api-design-06",
+      "type": "scenario",
+      "concept": "GraphQL enables frontend iteration without backend endpoint changes",
+      "question": "A fintech startup redesigns its web dashboard every sprint. Under their REST API, nearly every redesign needs a backend ticket — a new endpoint here, extra fields there — and the frontend team is routinely blocked waiting for backend deploys even though the underlying entities never change. What API approach removes this cross-team dependency, and how?",
+      "answer": "GraphQL. The backend exposes a schema of types and relationships once, and each redesign is just a new client-side query shape — the frontend changes what it asks for without any new backend endpoints or deploys."
+    },
+    {
+      "id": "api-design-07",
+      "type": "scenario",
+      "concept": "GraphQL N+1 query problem and dataloader fix",
+      "question": "A project-management SaaS migrated its task board to GraphQL. Loading a board with 200 tasks and their assignees now fires 201 database queries per request: one for the task list, then one per task to resolve its assignee. What is this problem called, and what is the standard fix?",
+      "answer": "The N+1 query problem: naive resolvers fetch each nested object individually. The fix is batching via a dataloader pattern, which collects the assignee lookups and resolves them in one query."
+    },
+    {
+      "id": "api-design-08",
+      "type": "scenario",
+      "concept": "GraphQL field-level authorization vs REST endpoint-level",
+      "question": "A hospital patient portal uses GraphQL. Nurses should see a patient's name and appointments but never the billing fields on the same Patient type, while billing staff need the reverse. In REST this would be separate protected endpoints. Where is this access control enforced in GraphQL?",
+      "answer": "At the field level, inside resolvers. GraphQL secures individual fields rather than whole endpoints, so a single Patient type can expose different fields to different roles."
+    },
+    {
+      "id": "api-design-09",
+      "type": "scenario",
+      "concept": "gRPC for high-volume internal service-to-service calls",
+      "question": "A ride-hailing company's dispatch, pricing, and driver-location services exchange tens of thousands of internal calls per second using JSON over HTTP REST. Profiling shows serialization and connection overhead dominate latency. What should they switch these internal calls to, and why?",
+      "answer": "gRPC with Protocol Buffers. Binary serialization over HTTP/2 is significantly faster than JSON-over-HTTP for service-to-service traffic, which is exactly the internal, high-frequency workload gRPC is built for."
+    },
+    {
+      "id": "api-design-10",
+      "type": "scenario",
+      "concept": "Protocol Buffers compile-time cross-language type safety",
+      "question": "A parcel-logistics firm has a Go tracking service calling a Java billing service over REST. Twice this quarter a renamed or re-typed JSON field slipped through review and broke production, because nothing verified the contract before deploy. What mechanism would catch these mismatches earlier?",
+      "answer": "Define the contract in Protocol Buffers (.proto files) and generate client and server code for both languages. Contract violations then fail at compile time in either codebase instead of surfacing in production."
+    },
+    {
+      "id": "api-design-11",
+      "type": "scenario",
+      "concept": "gRPC bidirectional streaming over HTTP/2",
+      "question": "A logistics company's internal dispatch service must continuously receive location pings from a vehicle-gateway service while simultaneously pushing route corrections back to it, all with low latency between two services the company controls. Plain REST request-response would force each side to poll the other. Which gRPC capability fits this, and why?",
+      "answer": "gRPC's bidirectional streaming: both services exchange typed messages continuously over a single multiplexed HTTP/2 connection, so neither side polls and every message rides an already-open stream."
+    },
+    {
+      "id": "api-design-12",
+      "type": "true_false",
+      "concept": "RPC is action-oriented; REST is resource-oriented",
+      "question": "An RPC API models operations as named procedures such as cancelSubscription(userId), while REST models the same operation as a standard HTTP method applied to a resource, such as DELETE /subscriptions/{id}.",
+      "answer": "True — RPC is action-oriented (you call remote functions by name), whereas REST is resource-oriented (a fixed set of HTTP verbs applied to noun-named resources)."
+    },
+    {
+      "id": "api-design-13",
+      "type": "scenario",
+      "concept": "Practical split: public REST, internal gRPC",
+      "question": "A smart-home IoT platform must expose an API to third-party integrators' web apps and also connect its own device-registry, automation, and notification microservices. An engineer proposes gRPC everywhere for consistency. What split does conventional guidance recommend, and why?",
+      "answer": "REST for the public-facing API and gRPC for internal service-to-service calls. External clients need universal compatibility and easy debugging, which REST gives them; internal traffic benefits from gRPC's speed and type safety. Forcing one protocol on both audiences sacrifices one of them."
+    },
+    {
+      "id": "api-design-14",
+      "type": "scenario",
+      "concept": "WebSockets/SSE replace request-response for real-time features",
+      "question": "A messaging app's clients poll GET /conversations/{id}/messages every two seconds. Servers are drowning in mostly-empty responses, and messages still arrive with visible lag. What should replace this design?",
+      "answer": "A server-push channel — WebSockets, or Server-Sent Events for one-way delivery — so new messages arrive the moment they exist. Request-response polling is the wrong primitive for real-time features like chat."
+    },
+    {
+      "id": "api-design-15",
+      "type": "scenario",
+      "concept": "SSE for one-way server push vs WebSockets for bidirectional communication",
+      "question": "One team at a sports-media company is building a live-score widget that only ever pushes updates from server to browser. Another team is building a collaborative whiteboard where every client constantly sends strokes and receives everyone else's. Both need real-time behavior. Which push technology fits each feature, and what is the distinguishing factor?",
+      "answer": "Server-Sent Events for the score widget: it is one-way server-to-client push over plain HTTP, the simplest fit when clients never send. WebSockets for the whiteboard, because it needs a persistent bidirectional channel where clients send as well as receive."
+    },
+    {
+      "id": "api-design-16",
+      "type": "scenario",
+      "concept": "Resources are plural nouns; actions live in HTTP methods, not verb URLs",
+      "question": "During an API review at a furniture e-commerce company, a new service ships endpoints named POST /createOrder, POST /cancelOrder, and GET /getOrders. The reviewer rejects the design as un-RESTful. What is the objection, and what should the endpoints look like?",
+      "answer": "REST models resources as plural nouns and expresses actions through HTTP methods, not verbs embedded in the URL. The endpoints should be POST /orders to create, GET /orders to list, and DELETE /orders/{id} (or a status-changing update) to cancel."
+    },
+    {
+      "id": "api-design-17",
+      "type": "scenario",
+      "concept": "Nested paths for required relationships vs flat paths with query-param filters",
+      "question": "An online-learning platform is designing two list endpoints. Comments only ever exist on a specific lesson and are only fetched in that lesson's context. Assignments must be filterable by any combination of course, student, and due date. How should each URL be structured, and why do they differ?",
+      "answer": "Nest comments under their parent — /lessons/{id}/comments — because the relationship is required for the request to be meaningful. Keep assignments flat with query parameters — /assignments?course_id=...&student_id=... — because each filter is optional and freely combinable."
+    },
+    {
+      "id": "api-design-18",
+      "type": "scenario",
+      "concept": "POST non-idempotency: retries create duplicates",
+      "question": "A peer-to-peer payments app sees occasional double-charges. Logs show that on flaky mobile networks the client times out waiting on POST /transfers, automatically retries, and both attempts eventually succeed server-side. What underlying API property is at fault, and what is the fix?",
+      "answer": "POST is not idempotent, so each retry creates a new transfer — the blind retry duplicates the money movement. The fix is an idempotency key so the server maps repeated attempts of the same logical operation to a single transfer."
+    },
+    {
+      "id": "api-design-19",
+      "type": "mcq2",
+      "concept": "Which HTTP methods are idempotent and safe to auto-retry",
+      "question": "An API gateway team wants to add automatic retries for any request that times out, without risking duplicated side effects. Which set of HTTP methods is safe to blanket-retry?",
+      "options": [
+        "GET, PUT, DELETE",
+        "GET, POST, PATCH"
+      ],
+      "answer": "GET, PUT, DELETE — these are idempotent, so repeating them reaches the same final state, while POST (and in general PATCH) can create duplicates or compound changes when retried."
+    },
+    {
+      "id": "api-design-20",
+      "type": "scenario",
+      "concept": "PUT replaces the whole resource; PATCH is a partial update",
+      "question": "A SaaS admin dashboard updates user emails by sending PUT /users/{id} with a body containing only the new email address. After the change ships, users' display names and notification preferences vanish. Why?",
+      "answer": "PUT replaces the entire resource, so every field omitted from the body is wiped. Either send the complete user object with PUT or switch to PATCH, which applies only the supplied fields."
+    },
+    {
+      "id": "api-design-21",
+      "type": "scenario",
+      "concept": "Data placement: path = required identity, query = optional modifier, body = complex payload",
+      "question": "A travel-booking API team is designing 'create a reservation at a hotel.' They must place three inputs somewhere: the hotel's ID, an optional flag to email a confirmation, and the guest list with payment details. Where does each belong, and why?",
+      "answer": "The hotel ID goes in the path because it is required identity — the request is meaningless without it. The confirmation flag goes in a query parameter as an optional behavior modifier. The guest list and payment details go in the request body, which is for complex, sensitive structured data."
+    },
+    {
+      "id": "api-design-22",
+      "type": "scenario",
+      "concept": "4xx (client error) vs 5xx (server error) classification",
+      "question": "An analytics API returns HTTP 500 whenever a customer submits a malformed date filter. Customers' retry logic treats 500 as transient and hammers the endpoint, and on-call engineers get paged for what is really bad input. What should change?",
+      "answer": "Return 400 instead: malformed input is a client error (4xx), not a server failure (5xx). Correct classification tells clients not to retry and stops false alarms — the 4xx-versus-5xx split is the distinction that actually matters."
+    },
+    {
+      "id": "api-design-23",
+      "type": "mcq2",
+      "concept": "201 Created vs 200 OK for resource creation",
+      "question": "A banking API's POST /accounts call succeeds and a new account record now exists. Which status code best describes the outcome?",
+      "options": [
+        "201 Created",
+        "200 OK"
+      ],
+      "answer": "201 Created — it explicitly signals that a new resource was created, which is more precise than the generic 200 success."
+    },
+    {
+      "id": "api-design-24",
+      "type": "scenario",
+      "concept": "Offset pagination instability under live inserts",
+      "question": "A short-video app paginates its trending feed with ?offset=40&limit=20. Users scrolling during peak hours report seeing the same videos twice and never seeing others. The database itself is healthy. What is happening?",
+      "answer": "New videos inserted while users scroll shift every row's position, so successive offset windows overlap or skip records. Offset pagination is unstable under real-time inserts; cursor-based pagination anchored to a stable record pointer fixes it."
+    },
+    {
+      "id": "api-design-25",
+      "type": "scenario",
+      "concept": "Cursor pagination cannot jump to an arbitrary page",
+      "question": "An internal compliance tool lets auditors browse a frozen archive of 9,000 transactions and requires a 'jump to page N' control. The team implemented cursor-based pagination and now cannot build the page picker. What went wrong in the choice?",
+      "answer": "Cursors only advance relative to a known record, so random access to page N is awkward by design. For a static dataset needing page jumps, offset pagination is the right fit — its instability weakness does not apply when the data never changes."
+    },
+    {
+      "id": "api-design-26",
+      "type": "scenario",
+      "concept": "Cursor pagination mechanics: opaque next_cursor returned with each page",
+      "question": "A news app is implementing cursor-based pagination for its article feed. A junior engineer asks what the server must actually return with each page, and how the client requests the page after it. Describe the request/response contract.",
+      "answer": "Each response returns the page of items plus an opaque next_cursor that encodes the position of the last item (for example its ID or timestamp). The client sends it back on the next request — ?cursor=abc123&limit=10 — and a missing or null next_cursor signals the end of the list."
+    },
+    {
+      "id": "api-design-27",
+      "type": "scenario",
+      "concept": "URL versioning vs header versioning",
+      "question": "A public weather-data API needs a breaking change to its forecast response format without stranding thousands of existing integrations. One engineer proposes /v2/forecasts in the URL; another proposes an Accept-Version request header. Which is the sensible default, and what is the trade-off?",
+      "answer": "URL versioning: /v2/ is explicit, trivially routed to separate code paths, and testable straight from a browser. Header versioning keeps URLs cleaner but is less discoverable and harder to exercise, so it is the exception rather than the default."
+    },
+    {
+      "id": "api-design-28",
+      "type": "scenario",
+      "concept": "Authentication (identity) vs authorization (permission)",
+      "question": "In a fitness-class booking app, a logged-in user edits the reservation ID in the URL and successfully cancels a stranger's booking. The request carried a perfectly valid session token. Which security control is missing, and how does it differ from the one that passed?",
+      "answer": "Authorization is missing. Authentication — the valid token — only proves who the caller is; authorization checks whether that caller may act on that specific resource, here an ownership check that the booking belongs to the requester."
+    },
+    {
+      "id": "api-design-29",
+      "type": "scenario",
+      "concept": "API keys are for server-to-server/third-party access, not end users",
+      "question": "A music-streaming startup authenticates its consumer mobile app by issuing each listener a long-lived API key stored on the device. A security review flags the scheme. Why is this the wrong tool, and what fits instead?",
+      "answer": "API keys identify applications and servers — they suit server-to-server integrations and third-party developer access, not end users holding long-lived secrets on personal devices. Consumer sessions belong on JWTs or session tokens issued at login, which carry per-user identity and expire."
+    },
+    {
+      "id": "api-design-30",
+      "type": "scenario",
+      "concept": "JWT statelessness removes central session lookups",
+      "question": "A gaming platform's twelve microservices each validate every incoming request by calling one central session service that looks tokens up in a database. That service is now the platform's biggest bottleneck and single point of failure. What change removes the lookup entirely?",
+      "answer": "Switch to JWTs. The token itself carries signed user context, so any service holding the verification key validates requests locally by checking the signature — stateless authentication with no central database call."
+    },
+    {
+      "id": "api-design-31",
+      "type": "scenario",
+      "concept": "RBAC: role-scoped permissions plus resource-ownership checks",
+      "question": "An online marketplace has sellers who may edit only their own listings, support agents who may view all orders but change nothing, and admins who can do anything. Today authorization is a single is_admin flag plus scattered if-statements. What model should replace this, and what per-request check still remains?",
+      "answer": "Role-based access control: define roles (seller, support, admin), attach permissions to roles, and assign roles to users. Each request still needs a resource-level ownership check — a seller edits a listing only if they own it or are an admin."
+    },
+    {
+      "id": "api-design-32",
+      "type": "scenario",
+      "concept": "Endpoint-specific rate limiting with 429 responses",
+      "question": "During a limited sneaker drop, bots fire thousands of checkout requests per second and lock real customers out of an e-commerce site. The team wants browsing to stay generous while choking checkout abuse. What should they implement, and what should rejected requests receive?",
+      "answer": "Endpoint-specific rate limiting — a strict per-user cap on checkout attempts per minute layered on looser per-user and per-IP limits elsewhere — returning 429 Too Many Requests when a limit is exceeded."
+    },
+    {
+      "id": "api-design-33",
+      "type": "true_false",
+      "concept": "Rate limiting is enforced at the gateway/middleware layer",
+      "question": "Rate limiting is typically enforced centrally at an API gateway or middleware layer, rather than being re-implemented inside each individual endpoint handler.",
+      "answer": "True — a central gateway or middleware applies consistent limits across all endpoints and rejects excess traffic before it ever reaches application logic."
+    }
+  ]
+}

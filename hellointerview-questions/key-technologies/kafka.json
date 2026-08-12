@@ -1,0 +1,330 @@
+{
+  "section": "key-technologies",
+  "subsection": "Kafka",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/kafka",
+  "concepts": [
+    "Per-key ordering is guaranteed only within a single partition",
+    "Consumer-group parallelism is capped by partition count (extra consumers idle)",
+    "Adding brokers only helps if the topic has enough partitions to spread",
+    "Hot partitions caused by skewed partition keys",
+    "Random salting of keys and the de-salt/re-aggregate cost downstream",
+    "Compound keys spread load while preserving the ordering that actually matters",
+    "Keyless sticky partitioning when ordering is irrelevant",
+    "Producer backpressure driven by consumer lag",
+    "acks=1 data-loss window on leader failure",
+    "Choosing acks=0 for loss-tolerant, latency-sensitive workloads",
+    "Replication factor >=3 for durability; RF=1 loses data on broker failure",
+    "Cluster controller promotes in-sync replica (ISR) followers on leader failure",
+    "At-least-once redelivery and the need for idempotent consumers",
+    "Committing offsets before processing silently loses messages (at-most-once)",
+    "Idempotent producer prevents duplicates from producer retries",
+    "Retry topic + dead-letter queue pattern for failed consumer processing",
+    "Kafka vs SQS: SQS has built-in consumer retries and DLQs, Kafka does not",
+    "Large-message anti-pattern: keep messages ~1MB, put blobs in object storage with a pointer",
+    "Rules of thumb: ~1M messages/sec and ~1TB storage per broker",
+    "Default 7-day retention (retention.ms) limits replay depth",
+    "Archive to warehouse/object storage instead of multi-year Kafka retention",
+    "Log compaction keeps the latest value per key (changelog topics)",
+    "Multiple consumer groups each get a full copy (pub/sub fan-out)",
+    "Kafka as an async buffer decoupling producers from consumers",
+    "Pull-based consumption means slow consumers cannot be overwhelmed",
+    "Consumer-group rebalancing pauses consumption (stop-the-world)",
+    "Producer batching amortizes per-message network/protocol overhead",
+    "Compression (GZIP/Snappy/LZ4) trades CPU for bandwidth and storage",
+    "Exactly-once requires transactional/idempotent configuration; default is at-least-once",
+    "Separate topics provide logical segregation so consumers only read relevant data",
+    "Committed offsets let a restarted consumer resume from its last position",
+    "Append-only log design gives sequential disk I/O and high throughput",
+    "partition = hash(key) % num_partitions, so changing partition count remaps keys",
+    "Managed Kafka (Confluent Cloud / AWS MSK) offloads cluster operations",
+    "Kafka is wrong for synchronous request-response paths",
+    "Consumer fetch tuning (fetch.min.bytes / fetch.max.wait.ms) trades latency for throughput",
+    "Message anatomy: four optional fields (key, value, timestamp, headers); headers carry cross-cutting metadata",
+    "'Always available, sometimes consistent': design for consumer failures, not total Kafka loss",
+    "Consuming does not delete messages; resetting offsets replays retained history"
+  ],
+  "question_count": 39,
+  "questions": [
+    {
+      "id": "kafka-01",
+      "type": "scenario",
+      "concept": "Per-key ordering is guaranteed only within a single partition",
+      "question": "A ride-hailing app publishes trip lifecycle events (requested, driver_assigned, started, completed) to a Kafka topic with no message key. The billing service occasionally processes a trip's \"completed\" event before its \"started\" event and computes nonsense fares. What is going wrong, and what is the fix?",
+      "answer": "Kafka only guarantees ordering within a single partition, and keyless messages are spread across partitions, so one trip's events interleave out of order. Key every event by trip ID so all of a trip's events hash to the same partition and arrive in order."
+    },
+    {
+      "id": "kafka-02",
+      "type": "scenario",
+      "concept": "Consumer-group parallelism is capped by partition count (extra consumers idle)",
+      "question": "A game studio's telemetry topic has 4 partitions and consumer lag keeps growing. The team scales its consumer group from 4 instances to 12, but lag does not improve at all. Why not?",
+      "answer": "Each partition is assigned to exactly one consumer in a group, so at most 4 consumers can do work while the other 8 sit idle. Partition count is the ceiling on group parallelism; they must add partitions, not consumers."
+    },
+    {
+      "id": "kafka-03",
+      "type": "scenario",
+      "concept": "Adding brokers only helps if the topic has enough partitions to spread",
+      "question": "An e-commerce company's orders topic has 3 partitions. Ahead of Black Friday, ops grows the Kafka cluster from 3 brokers to 9, but topic throughput does not budge. What did they miss?",
+      "answer": "A topic's throughput is carried by its partition leaders, and with only 3 partitions at most 3 brokers can lead them — the new brokers sit idle for this topic. Adding brokers is useless without enough partitions to spread across them."
+    },
+    {
+      "id": "kafka-04",
+      "type": "scenario",
+      "concept": "Hot partitions caused by skewed partition keys",
+      "question": "An ad-analytics pipeline keys click events by ad ID. When one ad goes viral, a single partition's lag explodes and its broker pegs at 100% while the rest of the cluster idles. What failure mode is this, and why does it happen?",
+      "answer": "A hot partition: hashing the key routes every click for that ad to one partition, so a skewed key distribution concentrates the entire traffic spike on a single partition and broker."
+    },
+    {
+      "id": "kafka-05",
+      "type": "scenario",
+      "concept": "Random salting of keys and the de-salt/re-aggregate cost downstream",
+      "question": "A social platform keys hashtag-usage events by hashtag. To defuse a trending-hashtag hot partition, an engineer appends a random 0-9 suffix to each key. The per-hashtag counts on the dashboard immediately drop to roughly a tenth of reality. What must the team change downstream?",
+      "answer": "The salt split each hashtag across ten sub-keys and partitions, so the aggregator must strip the salt and sum counts across all salted variants. Salting always buys load spreading at the cost of an extra de-salt/re-aggregation step."
+    },
+    {
+      "id": "kafka-06",
+      "type": "scenario",
+      "concept": "Compound keys spread load while preserving the ordering that actually matters",
+      "question": "An IoT platform keys machine sensor readings by factory ID, and one giant factory overloads its partition. Ordering only matters per individual machine, never across a whole factory. What key change fixes the skew without losing the ordering they need?",
+      "answer": "Switch to a compound key like factoryId:machineId. It spreads the big factory's traffic across many partitions while every reading from a given machine still hashes to one partition, preserving per-machine order."
+    },
+    {
+      "id": "kafka-07",
+      "type": "scenario",
+      "concept": "Keyless sticky partitioning when ordering is irrelevant",
+      "question": "A music-streaming service keys play-log events by user ID purely out of habit, and a few power listeners create partition skew. No consumer depends on the order of these events. What is the simplest fix?",
+      "answer": "Drop the key entirely: the default sticky partitioner spreads keyless messages roughly evenly across partitions. This sacrifices per-key ordering, which is exactly the guarantee nobody here needs."
+    },
+    {
+      "id": "kafka-08",
+      "type": "scenario",
+      "concept": "Producer backpressure driven by consumer lag",
+      "question": "A ticketing site runs a flash sale. Producers write purchase-intent events far faster than consumers can drain them, and lag grows until confirmations arrive uselessly late. Beyond adding consumers, what mechanism keeps lag bounded at the source?",
+      "answer": "Backpressure: the producer side monitors consumer/partition lag and throttles or pauses publishing once lag crosses a threshold, trading producer throughput for bounded end-to-end latency."
+    },
+    {
+      "id": "kafka-09",
+      "type": "scenario",
+      "concept": "acks=1 data-loss window on leader failure",
+      "question": "A fintech firm produces ledger entries with acks=1. During a broker failure, several entries the producer had received success acknowledgments for are simply missing from the topic. How did acknowledged writes get lost?",
+      "answer": "With acks=1 only the partition leader confirms the write; the leader died before its followers replicated those entries, and a follower missing them was promoted. Durable writes need acks=all with replication factor >=3."
+    },
+    {
+      "id": "kafka-10",
+      "type": "scenario",
+      "concept": "Choosing acks=0 for loss-tolerant, latency-sensitive workloads",
+      "question": "A delivery-tracking app streams courier GPS pings every two seconds. A lost ping is irrelevant because a fresh one replaces it almost immediately, but the live map must feel real-time. Which producer acks setting fits, and why?",
+      "answer": "acks=0, fire-and-forget: it minimizes producer latency and overhead, and the workload explicitly tolerates occasional loss. Paying the round-trip cost of acks=all buys durability this data does not need."
+    },
+    {
+      "id": "kafka-11",
+      "type": "scenario",
+      "concept": "Replication factor >=3 for durability; RF=1 loses data on broker failure",
+      "question": "To cut disk costs, a logistics startup runs its shipment-events topic with replication factor 1. A broker's disk dies and weeks of not-yet-consumed shipment events are permanently gone. What principle did they violate?",
+      "answer": "With RF=1 there are no follower replicas, so any single broker failure destroys that partition's data. Production topics need replication factor >=3 (a leader plus two followers), accepting 3x storage for durability."
+    },
+    {
+      "id": "kafka-12",
+      "type": "scenario",
+      "concept": "Cluster controller promotes in-sync replica (ISR) followers on leader failure",
+      "question": "In a chat backend, the Kafka broker hosting several partition leaders crashes. Consumers see a brief pause, then delivery resumes with no data loss and no operator action. What mechanism made that happen?",
+      "answer": "The cluster controller detected the dead broker and promoted in-sync replica (ISR) followers on surviving brokers to be the new partition leaders. Because ISR followers had fully replicated the leader's log, failover was automatic and lossless."
+    },
+    {
+      "id": "kafka-13",
+      "type": "scenario",
+      "concept": "At-least-once redelivery and the need for idempotent consumers",
+      "question": "A notifications service consumes events and sends push notifications, committing offsets only after each batch finishes. After a consumer crash, some users receive the same notification twice. Is this a Kafka bug, and what should the team do?",
+      "answer": "Not a bug — it is Kafka's at-least-once guarantee: the crash landed after sending but before the offset commit, so those messages were redelivered. The fix is idempotent processing, such as deduplicating on a notification ID."
+    },
+    {
+      "id": "kafka-14",
+      "type": "scenario",
+      "concept": "Committing offsets before processing silently loses messages (at-most-once)",
+      "question": "A SaaS analytics consumer commits offsets the moment it fetches a batch, then processes it. After a crash during a deploy, the nightly numbers show a permanent gap: those events were never processed and never redelivered. Why?",
+      "answer": "Committing before processing marks unprocessed messages as done, so a crash mid-batch skips them forever — effectively at-most-once delivery. Commit after processing completes, accepting possible reprocessing instead of silent loss."
+    },
+    {
+      "id": "kafka-15",
+      "type": "scenario",
+      "concept": "Idempotent producer prevents duplicates from producer retries",
+      "question": "A payments team enables aggressive producer retries to survive a flaky network, and duplicate payment events start appearing in the topic itself — consumers never crashed. What setting is missing?",
+      "answer": "The idempotent producer. Without it, a retry after a lost acknowledgment writes the same message twice; with idempotence on, the broker recognizes and discards the duplicate, making retries safe."
+    },
+    {
+      "id": "kafka-16",
+      "type": "scenario",
+      "concept": "Retry topic + dead-letter queue pattern for failed consumer processing",
+      "question": "A food-delivery order consumer hits a malformed \"poison\" message that throws on every attempt. The consumer retries it in place and the whole partition backs up behind it. Kafka offers no built-in remedy — what should the team build?",
+      "answer": "A retry pipeline: publish failing messages to a dedicated retry topic consumed with exponential backoff, and after N failed attempts route them to a dead-letter queue for offline inspection. The main partition keeps flowing past the poison message."
+    },
+    {
+      "id": "kafka-17",
+      "type": "mcq2",
+      "concept": "Kafka vs SQS: SQS has built-in consumer retries and DLQs, Kafka does not",
+      "question": "A team is building a background job queue for a web crawler. They want per-message retries with backoff and a dead-letter queue, with zero custom infrastructure to maintain. Which technology fits better?",
+      "options": [
+        "Kafka",
+        "AWS SQS"
+      ],
+      "answer": "AWS SQS — it ships consumer retries and dead-letter queues out of the box, whereas Kafka makes you build retry topics and DLQ plumbing yourself."
+    },
+    {
+      "id": "kafka-18",
+      "type": "scenario",
+      "concept": "Large-message anti-pattern: keep messages ~1MB, put blobs in object storage with a pointer",
+      "question": "A video platform writes 50 MB raw video segments directly into Kafka messages. Brokers hit memory pressure and latency degrades for every topic on the cluster. What is the right architecture?",
+      "answer": "Kafka messages should stay around 1 MB or smaller. Store the video segments in object storage like S3 and publish only a small pointer/metadata message to Kafka that consumers use to fetch the blob."
+    },
+    {
+      "id": "kafka-19",
+      "type": "scenario",
+      "concept": "Rules of thumb: ~1M messages/sec and ~1TB storage per broker",
+      "question": "In a capacity-planning review, an engineer proposes a single Kafka broker to ingest a news site's clickstream, projected at 4 million events per second. What does back-of-envelope math say?",
+      "answer": "Rough rules of thumb are about 1 million messages/second and around 1 TB of practical storage per broker, so one broker is roughly 4x undersized before replication is even counted. This needs a multi-broker cluster with enough partitions to spread the load."
+    },
+    {
+      "id": "kafka-20",
+      "type": "scenario",
+      "concept": "Default 7-day retention (retention.ms) limits replay depth",
+      "question": "A growth team plans to backfill a new metric by replaying the last 60 days of clickstream events from Kafka, but the consumer finds only about one week of history. What happened?",
+      "answer": "Kafka's default retention.ms keeps data for 7 days, after which segments are deleted. Deep replays require raising retention ahead of time or replaying from an external archive — the data is already gone."
+    },
+    {
+      "id": "kafka-21",
+      "type": "scenario",
+      "concept": "Archive to warehouse/object storage instead of multi-year Kafka retention",
+      "question": "A healthcare SaaS must retain audit events for seven years. An engineer proposes simply setting the audit topic's retention to seven years. What is the better pattern, and why?",
+      "answer": "Keep Kafka retention short and continuously drain the topic into cheap long-term storage such as a data warehouse or object store. Replicated broker disks make Kafka an expensive, awkward archive — it is a transport and buffer, not a system of record."
+    },
+    {
+      "id": "kafka-22",
+      "type": "scenario",
+      "concept": "Log compaction keeps the latest value per key (changelog topics)",
+      "question": "A feature-flag service streams every flag change through Kafka. New consumers only need the current value of each flag, but time-based retention either deletes flags that never change or hoards endless stale updates. What retention mode fits?",
+      "answer": "Log compaction: Kafka keeps the latest message per key indefinitely and discards superseded values, turning the topic into a compact changelog that new consumers replay to rebuild current state."
+    },
+    {
+      "id": "kafka-23",
+      "type": "scenario",
+      "concept": "Multiple consumer groups each get a full copy (pub/sub fan-out)",
+      "question": "A live-streaming platform must deliver every chat comment to three separate services — moderation, on-screen display, and analytics — each needing its own complete copy of the stream at its own pace. How should consumption be organized?",
+      "answer": "Put each service in its own consumer group. Every group independently receives all messages and tracks its own offsets — Kafka acting as pub/sub fan-out rather than a work queue."
+    },
+    {
+      "id": "kafka-24",
+      "type": "scenario",
+      "concept": "Kafka as an async buffer decoupling producers from consumers",
+      "question": "A photo-sharing app generates thumbnails synchronously inside the upload HTTP request, and uploads time out whenever traffic spikes. How specifically does inserting Kafka fix this?",
+      "answer": "It makes the work asynchronous: the upload service writes a job message and returns immediately, while thumbnail workers consume at their own rate. The topic absorbs bursts and lets producers and consumers scale and fail independently."
+    },
+    {
+      "id": "kafka-25",
+      "type": "scenario",
+      "concept": "Pull-based consumption means slow consumers cannot be overwhelmed",
+      "question": "An e-commerce team migrating off webhooks worries that Kafka will flood their slow search indexer the way peak-hour webhook bursts used to crash it. Is the worry valid?",
+      "answer": "No — Kafka consumers pull. The indexer fetches batches at whatever rate it can handle while unread messages accumulate safely in the durable log, so producers cannot overwhelm it the way push delivery did."
+    },
+    {
+      "id": "kafka-26",
+      "type": "scenario",
+      "concept": "Consumer-group rebalancing pauses consumption (stop-the-world)",
+      "question": "A SaaS company's 40-instance consumer group deploys new code one instance at a time, and every single restart stalls the entire group's consumption for several seconds. Nothing is crashing. What causes the stalls?",
+      "answer": "Each consumer joining or leaving triggers a group rebalance that reassigns partitions and briefly pauses everyone — a stop-the-world event. A one-by-one rolling restart fires 40 rebalances back to back; tune rebalance/session settings or restart in fewer waves."
+    },
+    {
+      "id": "kafka-27",
+      "type": "scenario",
+      "concept": "Producer batching amortizes per-message network/protocol overhead",
+      "question": "A telemetry producer sends every metric as its own individual request to Kafka. Per-message network and protocol overhead dominates, and throughput plateaus far below what the hardware can do. What is the standard first fix?",
+      "answer": "Batch the sends: accumulating many messages per request amortizes the fixed per-request costs across hundreds of messages. Producer batching is the basic Kafka throughput lever before anything fancier."
+    },
+    {
+      "id": "kafka-28",
+      "type": "scenario",
+      "concept": "Compression (GZIP/Snappy/LZ4) trades CPU for bandwidth and storage",
+      "question": "A gaming company ships verbose JSON event logs from regional data centers to a central Kafka cluster over an expensive, bandwidth-capped WAN link. The link is saturated while broker and producer CPUs sit mostly idle. What producer setting helps, and what does it cost?",
+      "answer": "Enable producer compression (GZIP, Snappy, or LZ4): repetitive JSON compresses dramatically and relieves the WAN. The price is CPU spent compressing and decompressing — a clear win when bandwidth, not CPU, is the bottleneck."
+    },
+    {
+      "id": "kafka-29",
+      "type": "true_false",
+      "concept": "Exactly-once requires transactional/idempotent configuration; default is at-least-once",
+      "question": "A Kafka pipeline running with default settings delivers each message to a consumer exactly once.",
+      "answer": "False — the default guarantee is at-least-once: crashes between processing and offset commit cause redelivery. Exactly-once requires transactional producers/consumers plus idempotent processing, none of which is on by default."
+    },
+    {
+      "id": "kafka-30",
+      "type": "scenario",
+      "concept": "Separate topics provide logical segregation so consumers only read relevant data",
+      "question": "A logistics company publishes truck-fleet telemetry and warehouse-robot events into one shared Kafka topic. The warehouse-automation service reads and discards the majority of what it fetches, wasting compute and cluttering its code with filters. What structural feature of Kafka addresses this?",
+      "answer": "Separate topics per event category. Topics are Kafka's logical segregation mechanism: each consumer subscribes only to the streams it actually cares about instead of filtering out another team's data."
+    },
+    {
+      "id": "kafka-31",
+      "type": "scenario",
+      "concept": "Committed offsets let a restarted consumer resume from its last position",
+      "question": "An ETL consumer feeding a B2B dashboard is restarted every night by its orchestrator. An engineer worries each restart will reprocess the entire topic from the beginning. What Kafka mechanism makes that fear unfounded?",
+      "answer": "Committed offsets: the consumer periodically commits its position back to Kafka, and on restart it reads its last committed offset and resumes exactly from there rather than from the start of the log."
+    },
+    {
+      "id": "kafka-32",
+      "type": "mcq2",
+      "concept": "Append-only log design gives sequential disk I/O and high throughput",
+      "question": "Kafka sustains extremely high write throughput even on ordinary spinning disks. What is the primary reason?",
+      "options": [
+        "It keeps all recent messages in RAM and flushes to disk lazily",
+        "It only appends to the end of each partition's log, so disk I/O is sequential and avoids seeks"
+      ],
+      "answer": "It only appends to the end of each partition's log, so disk I/O is sequential and avoids seeks — seek time is the bottleneck append-only design eliminates; Kafka's speed does not depend on holding data in RAM."
+    },
+    {
+      "id": "kafka-33",
+      "type": "scenario",
+      "concept": "partition = hash(key) % num_partitions, so changing partition count remaps keys",
+      "question": "A chat platform keys messages by conversation ID and later doubles the topic's partition count for capacity. Immediately afterwards, new messages in existing conversations appear on different partitions than their history, breaking per-conversation ordering. Why?",
+      "answer": "Partition choice is hash(key) % num_partitions, so changing the partition count remaps many keys to new partitions, splitting a conversation's stream across two partitions. This is why partition counts should be provisioned for future scale up front."
+    },
+    {
+      "id": "kafka-34",
+      "type": "scenario",
+      "concept": "Managed Kafka (Confluent Cloud / AWS MSK) offloads cluster operations",
+      "question": "A two-engineer fintech startup needs Kafka's durability and ordering for payment events but has nobody to provision, tune, and page for broker clusters. What should they choose, and why?",
+      "answer": "A managed service like Confluent Cloud or AWS MSK, which handles provisioning, scaling, and broker operations. Self-hosting Kafka is a real operational burden a two-person team should not absorb — and saying so is the expected interview answer."
+    },
+    {
+      "id": "kafka-35",
+      "type": "scenario",
+      "concept": "Kafka is wrong for synchronous request-response paths",
+      "question": "To \"decouple services,\" a team routes price-quote lookups through Kafka: the web frontend produces a request event, then blocks waiting for the pricing service's response event before rendering the page. Latency is terrible and the code is contorted. What is the actual mistake?",
+      "answer": "Using Kafka for a synchronous request-response interaction. Kafka is built for asynchronous, decoupled flows; a blocking lookup in the request path should be a direct REST or gRPC call."
+    },
+    {
+      "id": "kafka-36",
+      "type": "scenario",
+      "concept": "Consumer fetch tuning (fetch.min.bytes / fetch.max.wait.ms) trades latency for throughput",
+      "question": "A metrics-dashboard consumer polls Kafka in a tight loop, receives only a handful of messages per fetch, and burns CPU on request overhead — even though a few extra seconds of delay would be perfectly acceptable. Which consumer settings address this?",
+      "answer": "Raise fetch.min.bytes and fetch.max.wait.ms so the broker holds each fetch until a meaningful batch accumulates. That trades a little latency for far fewer, larger fetches and better consumer throughput."
+    },
+    {
+      "id": "kafka-37",
+      "type": "scenario",
+      "concept": "Message anatomy: four optional fields (key, value, timestamp, headers); headers carry cross-cutting metadata",
+      "question": "A platform team wants every Kafka event to carry a trace ID and schema version for its observability tooling, but the payload schemas are owned by other teams and must not change. Where in the Kafka message does this metadata belong?",
+      "answer": "In message headers — key-value metadata pairs that travel with the message without touching the payload. A Kafka message has four optional fields (key, value, timestamp, headers), and headers exist precisely for cross-cutting metadata like trace IDs."
+    },
+    {
+      "id": "kafka-38",
+      "type": "scenario",
+      "concept": "'Always available, sometimes consistent': design for consumer failures, not total Kafka loss",
+      "question": "In a system design interview, a candidate spends most of their fault-tolerance time on a contingency plan for the entire Kafka cluster disappearing, and barely touches consumer crash handling. Why is this emphasis backwards?",
+      "answer": "Kafka is 'always available, sometimes consistent': with partitions replicated across brokers, total cluster loss is not a realistic failure mode worth designing around. The realistic failures are consumer crashes, so offset management, redelivery, and rebalancing deserve the attention."
+    },
+    {
+      "id": "kafka-39",
+      "type": "scenario",
+      "concept": "Consuming does not delete messages; resetting offsets replays retained history",
+      "question": "A recommendations team ships a bug that mis-scores three hours of user events before anyone notices. Every one of those events was already consumed during the window. Can the team reprocess them, and how?",
+      "answer": "Yes — consuming from Kafka never deletes messages; the log is retained regardless of reads, unlike a traditional queue. They fix the consumer and reset the group's offsets to just before the bad deploy, replaying the retained history (it is well within the 7-day default retention)."
+    }
+  ]
+}

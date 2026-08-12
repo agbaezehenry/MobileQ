@@ -1,0 +1,290 @@
+{
+  "section": "key-technologies",
+  "subsection": "PostgreSQL",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/postgres",
+  "concepts": [
+    "Interview framing: capabilities over internals",
+    "PostgreSQL as the default for relational data with integrity needs",
+    "B-tree default index handles equality, range, and ordering",
+    "Foreign key columns are not automatically indexed",
+    "Multi-column index leftmost-prefix rule",
+    "Over-indexing degrades write throughput",
+    "Covering indexes and index-only scans",
+    "Partial indexes for a hot subset of rows",
+    "Postgres full-text search before reaching for Elasticsearch",
+    "JSONB for semi-structured data in a relational schema",
+    "pg_trgm for fuzzy and substring matching",
+    "PostGIS/GiST for geospatial queries",
+    "EXPLAIN ANALYZE before guessing at fixes",
+    "Join-heavy hot paths: denormalize or precompute",
+    "Single-node read capacity — sharding modest read load is premature",
+    "Write throughput bounded by per-commit WAL flushes",
+    "ACID durability: WAL flushed before commit is acknowledged",
+    "Batching rows per transaction to amortize commit cost",
+    "Process-per-connection model and connection pooling",
+    "Vertical scaling before sharding",
+    "Table partitioning for very large time-series tables",
+    "Sharding when write volume exceeds one primary",
+    "Read replicas scale reads, not writes",
+    "Async replication lag breaks read-your-own-writes",
+    "Synchronous replication trades latency for zero loss",
+    "Failover onto an async replica can lose acknowledged commits",
+    "Transactions make multi-row operations atomic",
+    "READ COMMITTED does not prevent lost updates",
+    "Pessimistic locking with SELECT ... FOR UPDATE",
+    "Optimistic concurrency control with a version column",
+    "SERIALIZABLE isolation requires client retry logic",
+    "Hot-row counter contention",
+    "Single-primary Postgres cannot serve multi-region active-active writes",
+    "When a write-optimized NoSQL store fits better than Postgres",
+    "Avoid the generic SQL-vs-NoSQL debate in interviews"
+  ],
+  "question_count": 35,
+  "questions": [
+    {
+      "id": "postgres-01",
+      "type": "true_false",
+      "concept": "Interview framing: capabilities over internals",
+      "question": "In a system design interview, the strongest way to justify picking PostgreSQL is to open with a detailed walkthrough of MVCC and write-ahead-log internals.",
+      "answer": "False — interviewers mainly want to know whether the database fits your data relationships, consistency needs, and scale. Lead with capabilities and trade-offs; bring up internals only when they explain a specific limit you are designing around."
+    },
+    {
+      "id": "postgres-02",
+      "type": "scenario",
+      "concept": "PostgreSQL as the default for relational data with integrity needs",
+      "question": "A startup is building an invoicing SaaS: customers, invoices, line items, credit notes, and payments all reference each other, and an invoice total must always equal the sum of its line items. Traffic is a few hundred requests per second. One engineer pushes for a document database 'for flexibility'; another wants PostgreSQL. Which fits better, and why?",
+      "answer": "PostgreSQL. The data is inherently relational with cross-entity invariants, which foreign keys, joins, and ACID transactions enforce directly, while a document store would push that integrity work into application code. The scale is trivially within a single Postgres node."
+    },
+    {
+      "id": "postgres-03",
+      "type": "scenario",
+      "concept": "B-tree default index handles equality, range, and ordering",
+      "question": "A hotel-booking app runs queries like 'find reservations with check_in between two dates, sorted by check_in'. The query is slow, and a junior engineer claims they need to research some exotic index type because 'regular indexes only do exact matches'. What should the team actually do?",
+      "answer": "Just create a default B-tree index on check_in. B-trees are not limited to exact matches — they serve range predicates and can return rows already in sorted order, which covers this query entirely."
+    },
+    {
+      "id": "postgres-04",
+      "type": "scenario",
+      "concept": "Foreign key columns are not automatically indexed",
+      "question": "In a chat application, the messages table declares channel_id as a foreign key to channels. Loading a channel's messages does a full sequential scan of millions of rows, and the team is confused because 'the foreign key is right there'. What is going wrong?",
+      "answer": "PostgreSQL creates indexes automatically only for primary key and unique constraints — declaring a foreign key does not index the referencing column. They need to explicitly create an index on messages(channel_id)."
+    },
+    {
+      "id": "postgres-05",
+      "type": "scenario",
+      "concept": "Multi-column index leftmost-prefix rule",
+      "question": "A ride-hailing service has an index on trips(driver_id, started_at) that makes per-driver history queries fast. A new operations dashboard queries all trips across every driver started in the last hour, and it is dog slow despite 'started_at being indexed'. Why doesn't the existing index help?",
+      "answer": "A composite B-tree index is ordered by its leading column first, so queries that don't constrain driver_id can't use an index on (driver_id, started_at) effectively. The dashboard needs an index that leads with started_at."
+    },
+    {
+      "id": "postgres-06",
+      "type": "scenario",
+      "concept": "Over-indexing degrades write throughput",
+      "question": "A smart-home platform's sensor_readings table has accumulated nine indexes as different teams added ones for their own reports. Ingestion throughput has steadily dropped even though hardware hasn't changed. What is the likely cause and the fix?",
+      "answer": "Every insert must update all nine indexes, so index maintenance is now dominating the write path. Audit index usage, drop the unused ones, and keep only indexes that earn their write cost."
+    },
+    {
+      "id": "postgres-07",
+      "type": "scenario",
+      "concept": "Covering indexes and index-only scans",
+      "question": "An e-commerce catalog page runs 'SELECT id, name FROM products WHERE category_id = ?' thousands of times per second. There is already an index on category_id, but EXPLAIN shows the query still fetching every matching row from the table heap to get the name. How can the team make this query served from the index alone?",
+      "answer": "Create a covering index that carries every selected column — for example on (category_id) INCLUDE (id, name) — so Postgres can do an index-only scan and skip the heap fetches. Note that Postgres secondary indexes do not implicitly contain the primary key, so id must be included explicitly."
+    },
+    {
+      "id": "postgres-08",
+      "type": "scenario",
+      "concept": "Partial indexes for a hot subset of rows",
+      "question": "A SaaS platform's jobs table holds 200 million rows, 99% of them with status 'completed'. Workers constantly poll for status = 'pending' rows. A full index on status is huge, mostly filled with completed rows nobody queries. What indexing approach fits better?",
+      "answer": "A partial index: CREATE INDEX ... WHERE status = 'pending'. It only contains the tiny hot subset, so it stays small and fast, and completed rows never pay index maintenance for it."
+    },
+    {
+      "id": "postgres-09",
+      "type": "scenario",
+      "concept": "Postgres full-text search before reaching for Elasticsearch",
+      "question": "A recipe-sharing site with three million recipes wants keyword search over titles and instructions. The team is about to stand up an Elasticsearch cluster plus a sync pipeline from their PostgreSQL database. What should they consider first, and why?",
+      "answer": "Use Postgres's built-in full-text search: a tsvector column with a GIN index. At this scale it handles keyword search well and avoids running and keeping a second search system consistent with the source data. Reach for Elasticsearch only when relevance features or scale genuinely outgrow it."
+    },
+    {
+      "id": "postgres-10",
+      "type": "scenario",
+      "concept": "JSONB for semi-structured data in a relational schema",
+      "question": "A gaming platform stores per-game player settings whose shape varies wildly between games and changes every release. The team proposes adding MongoDB alongside their existing PostgreSQL database just to hold these settings. What is the simpler alternative?",
+      "answer": "Store the settings in a JSONB column on the existing players/games tables, adding a GIN index if they need to query inside it. That keeps flexible-schema data next to the relational data without operating a second database."
+    },
+    {
+      "id": "postgres-11",
+      "type": "scenario",
+      "concept": "pg_trgm for fuzzy and substring matching",
+      "question": "A CRM's contact search uses ILIKE '%smit%' so reps can find 'Smith' with partial or slightly misspelled input. With two million contacts each search takes seconds, and a plain B-tree index on name didn't help at all. What should the team use?",
+      "answer": "The pg_trgm extension with a trigram GIN index. B-trees can't serve ILIKE patterns with a leading wildcard, but trigram indexes accelerate substring and similarity matching directly in Postgres."
+    },
+    {
+      "id": "postgres-12",
+      "type": "scenario",
+      "concept": "PostGIS/GiST for geospatial queries",
+      "question": "A food-delivery app answers 'restaurants within 3 km of the user' by scanning latitude/longitude columns with hand-rolled bounding-box math over B-tree indexes. Queries are slow and the code is error-prone near the poles and the antimeridian. What is the right tool here?",
+      "answer": "PostGIS with a GiST spatial index. It gives correct distance and radius semantics and index-accelerated proximity queries, replacing the fragile manual geometry."
+    },
+    {
+      "id": "postgres-13",
+      "type": "scenario",
+      "concept": "EXPLAIN ANALYZE before guessing at fixes",
+      "question": "A B2B analytics dashboard query is fast in staging but takes 20 seconds in production. An engineer wants to start adding indexes based on gut feel until it improves. What should happen first instead?",
+      "answer": "Run EXPLAIN ANALYZE against the production query to see the actual plan — whether it's a sequential scan, a bad join order, or wildly wrong row estimates. Diagnose from the real plan, then change exactly what it shows is wrong."
+    },
+    {
+      "id": "postgres-14",
+      "type": "scenario",
+      "concept": "Join-heavy hot paths: denormalize or precompute",
+      "question": "A social app's home feed runs a query joining posts, users, follows, media, and like_counts — five tables — on every single feed load. At tens of thousands of requests per second the joins dominate database CPU, even though every join column is properly indexed. What is the standard way out?",
+      "answer": "Cut the join work off the hot path: denormalize (e.g., copy author name and avatar onto the post row) or precompute the feed, so the hot read becomes a simple indexed lookup. Simple indexed reads scale to tens of thousands per second per node, but multi-way joins do real per-query work and cap out far lower — indexes alone can't fix that."
+    },
+    {
+      "id": "postgres-15",
+      "type": "scenario",
+      "concept": "Single-node read capacity — sharding modest read load is premature",
+      "question": "A news site serving about 2,000 mostly-read requests per second is planning a sharded PostgreSQL deployment 'because relational databases don't scale'. Is the sharding justified?",
+      "answer": "No. A single well-tuned Postgres instance handles tens of thousands of simple reads per second, so 2,000 rps is comfortably within one node — and a cache or read replicas cover growth long before sharding is needed. Sharding now adds huge complexity for zero benefit."
+    },
+    {
+      "id": "postgres-16",
+      "type": "scenario",
+      "concept": "Write throughput bounded by per-commit WAL flushes",
+      "question": "A fintech ledger service commits every entry as its own transaction. Throughput plateaus at a few thousand writes per second while CPU sits mostly idle and the team is baffled that a beefier instance didn't help. What is the bottleneck?",
+      "answer": "Each commit forces the write-ahead log to be flushed to disk, so throughput is capped by how many synchronous disk flushes per second the storage can do — not CPU. One-commit-per-row designs hit this wall regardless of instance size."
+    },
+    {
+      "id": "postgres-17",
+      "type": "scenario",
+      "concept": "ACID durability: WAL flushed before commit is acknowledged",
+      "question": "A payments API tells clients 'payment recorded' only after PostgreSQL confirms COMMIT. Moments later the server loses power — before the background writer has flushed the modified table pages to disk. On restart, are those acknowledged payments gone?",
+      "answer": "No. Postgres flushes each transaction's WAL record to disk before acknowledging the commit, so crash recovery replays the WAL on restart and reconstructs every acknowledged change even though the table pages were stale. That WAL-before-acknowledge rule is how ACID durability is implemented."
+    },
+    {
+      "id": "postgres-18",
+      "type": "scenario",
+      "concept": "Batching rows per transaction to amortize commit cost",
+      "question": "A product-analytics pipeline inserts 20,000 events per second into PostgreSQL, one INSERT and one commit per event, and can't keep up. Events can tolerate a second or two of buffering. What change gives the biggest win?",
+      "answer": "Batch: buffer events and write hundreds or thousands of rows per transaction (multi-row INSERT or COPY). Amortizing the per-commit WAL flush across a batch multiplies effective write throughput by orders of magnitude."
+    },
+    {
+      "id": "postgres-19",
+      "type": "scenario",
+      "concept": "Process-per-connection model and connection pooling",
+      "question": "A URL-shortener runs on serverless functions, each opening its own PostgreSQL connection. During traffic spikes the database throws 'sorry, too many clients already' and its memory usage balloons even though the queries themselves are tiny. What is going on and what fixes it?",
+      "answer": "Postgres spawns an OS process per connection, so thousands of short-lived serverless connections exhaust max_connections and memory. Put a connection pooler like PgBouncer in front so many clients multiplex over a small set of real connections."
+    },
+    {
+      "id": "postgres-20",
+      "type": "scenario",
+      "concept": "Vertical scaling before sharding",
+      "question": "A marketplace on a mid-size PostgreSQL instance is nearing CPU and I/O limits. Half the team wants to implement application-level sharding now; the other half wants to move to a much larger instance. Which is the right next step, and why?",
+      "answer": "Scale vertically first. A bigger instance requires no application changes, and modern hardware pushes a single node very far, while sharding permanently complicates queries, transactions, and operations. Shard only when vertical scaling is genuinely exhausted."
+    },
+    {
+      "id": "postgres-21",
+      "type": "scenario",
+      "concept": "Table partitioning for very large time-series tables",
+      "question": "A fleet-telemetry table has grown to billions of rows. Queries only ever touch the last 7 days, yet they keep slowing down, and the monthly job that DELETEs data older than a year runs for hours and bloats the table. What structural change helps both problems?",
+      "answer": "Partition the table by time range. Queries then prune to only the recent partitions, and retention becomes dropping old partitions — an instant metadata operation instead of a massive DELETE."
+    },
+    {
+      "id": "postgres-22",
+      "type": "scenario",
+      "concept": "Sharding when write volume exceeds one primary",
+      "question": "A payments platform needs ACID transactions, but sustained write volume has grown past what one PostgreSQL primary can absorb even after batching, tuning, and a maxed-out instance. Read replicas are already in place. What is the remaining scaling path?",
+      "answer": "Shard the data across multiple primaries — application-level sharding by a key like account_id, or an extension like Citus. Replicas can't help because they don't take writes; only splitting the write load across nodes raises the ceiling."
+    },
+    {
+      "id": "postgres-23",
+      "type": "scenario",
+      "concept": "Read replicas scale reads, not writes",
+      "question": "A B2B dashboard product added three read replicas hoping to fix both slow report queries and slow bulk imports. Reports got faster, but import (write) latency didn't move at all. Why?",
+      "answer": "Replicas only serve reads; every write still goes through the single primary. Adding replicas offloads read traffic but does nothing for write throughput — if anything, more replicas add replication work for the primary."
+    },
+    {
+      "id": "postgres-24",
+      "type": "scenario",
+      "concept": "Async replication lag breaks read-your-own-writes",
+      "question": "On a community forum, users edit their profile bio, the save succeeds, but refreshing the page shows the old bio for a few seconds before the new one appears. Reads are load-balanced across replicas. What is happening and what is the standard fix?",
+      "answer": "The write hit the primary but the follow-up read hit an asynchronously replicating replica that hadn't applied it yet — classic replication lag. Route a user's reads of their own recently written data to the primary (or pin the session) to guarantee read-your-own-writes."
+    },
+    {
+      "id": "postgres-25",
+      "type": "scenario",
+      "concept": "Synchronous replication trades latency for zero loss",
+      "question": "A stock-brokerage wants a guarantee that no acknowledged transaction can ever be lost, so they are enabling synchronous replication to a standby. What cost should they expect to pay for this guarantee?",
+      "answer": "Every commit now waits for the standby to confirm before acknowledging, so write latency rises and the primary's availability is coupled to the standby's health. That latency and coupling is the price of zero-loss durability versus async replication."
+    },
+    {
+      "id": "postgres-26",
+      "type": "scenario",
+      "concept": "Failover onto an async replica can lose acknowledged commits",
+      "question": "An e-commerce site's PostgreSQL primary crashed and an asynchronous replica was automatically promoted. Afterward, support finds a handful of orders that customers received confirmation emails for but that don't exist in the database. How did this happen?",
+      "answer": "With async replication the primary acknowledges commits before replicas receive them, so the promoted replica was missing the last moments of writes. Those acknowledged-but-unreplicated orders were lost in the failover — the inherent risk of async replication."
+    },
+    {
+      "id": "postgres-27",
+      "type": "scenario",
+      "concept": "Transactions make multi-row operations atomic",
+      "question": "A ticketing site's checkout runs two separate statements: insert the order row, then decrement the seat-inventory row. A server crash between them left inventory decremented with no corresponding order, and a seat effectively vanished. What should the team change?",
+      "answer": "Wrap both statements in a single transaction so they commit atomically — either the order exists and inventory is decremented, or neither happened. This all-or-nothing guarantee is exactly what ACID atomicity is for."
+    },
+    {
+      "id": "postgres-28",
+      "type": "scenario",
+      "concept": "READ COMMITTED does not prevent lost updates",
+      "question": "In a multiplayer game, two concurrent requests each read a player's gold balance of 100, add a 50 reward, and write back 150. The player earned 100 gold but ended with 150. The database is at PostgreSQL's default isolation level. What is going wrong?",
+      "answer": "A lost update: both transactions did read-modify-write on the same row, and READ COMMITTED — the default — does nothing to stop the second write from overwriting the first. The fix is row locking, an atomic 'SET gold = gold + 50' update, or optimistic versioning."
+    },
+    {
+      "id": "postgres-29",
+      "type": "scenario",
+      "concept": "Pessimistic locking with SELECT ... FOR UPDATE",
+      "question": "A courier-dispatch system keeps assigning the same courier to two orders at once: two dispatch workers read the courier row as 'available' at the same time and both claim them. Contention on individual courier rows is frequent. What mechanism prevents the double-assignment?",
+      "answer": "SELECT ... FOR UPDATE when reading the courier row. The first transaction locks the row, the second blocks until it commits and then sees the courier is taken — pessimistic locking, which is the right call when conflicts on a row are common."
+    },
+    {
+      "id": "postgres-30",
+      "type": "scenario",
+      "concept": "Optimistic concurrency control with a version column",
+      "question": "A CMS lets editors open an article, edit for many minutes, and save. Conflicts are rare, and holding a database row lock for a whole editing session is off the table. How should the system detect conflicting saves?",
+      "answer": "Optimistic concurrency: store a version number, and save with UPDATE ... WHERE id = ? AND version = ?, incrementing it. If zero rows update, someone saved first — surface the conflict to the editor. No locks are held during think-time, which fits rare conflicts."
+    },
+    {
+      "id": "postgres-31",
+      "type": "scenario",
+      "concept": "SERIALIZABLE isolation requires client retry logic",
+      "question": "A bank moved its transfer logic to SERIALIZABLE isolation for correctness. Now logs show intermittent 'could not serialize access' (40001) errors and the on-call treats each one as a bug to be eliminated. Are these errors a defect?",
+      "answer": "No — they are how SERIALIZABLE works. Postgres aborts transactions whose interleaving can't be made equivalent to a serial order, and clients are expected to catch serialization failures and retry the transaction. The missing piece is a retry loop, not a bug fix."
+    },
+    {
+      "id": "postgres-32",
+      "type": "scenario",
+      "concept": "Hot-row counter contention",
+      "question": "A social feed updates a post's like_count by reading the row with a lock, adding one, and writing it back. When a post goes viral, like requests pile up and latency spikes on just that post. What is wrong and how should likes be counted at this scale?",
+      "answer": "Every like serializes on one hot row, so lock waits stack up. Drop the locked read-modify-write for a single atomic UPDATE ... SET like_count = like_count + 1, and at true viral scale batch or aggregate likes asynchronously — a like counter can be eventually consistent."
+    },
+    {
+      "id": "postgres-33",
+      "type": "scenario",
+      "concept": "Single-primary Postgres cannot serve multi-region active-active writes",
+      "question": "A collaboration app expands from the US into Europe and Asia and wants every region to accept writes locally with low latency. The plan is to keep the single PostgreSQL primary in Virginia and add read replicas in each region. What is wrong with this plan for writes?",
+      "answer": "Postgres is single-primary: the regional replicas can serve local reads, but every write still crosses the ocean to Virginia, so region-local write latency is impossible. Active-active writes require sharding data by region so each region's primary owns its users, or a multi-master store like DynamoDB Global Tables — vanilla Postgres replication won't provide it."
+    },
+    {
+      "id": "postgres-34",
+      "type": "scenario",
+      "concept": "When a write-optimized NoSQL store fits better than Postgres",
+      "question": "An industrial-IoT platform must ingest one million sensor readings per second, written once, looked up only by device ID and time, with no joins, no transactions, and relaxed consistency. Is PostgreSQL the right primary store here?",
+      "answer": "No — this is the workload where Postgres stops being the default. Extreme-volume simple writes with key-based access and no relational or transactional needs fit a horizontally scalable write-optimized store like Cassandra or DynamoDB; Postgres would demand heavy sharding while providing benefits this workload never uses."
+    },
+    {
+      "id": "postgres-35",
+      "type": "true_false",
+      "concept": "Avoid the generic SQL-vs-NoSQL debate in interviews",
+      "question": "When proposing a database in a system design interview, you should deliver a thorough SQL-versus-NoSQL pros-and-cons comparison before naming your choice.",
+      "answer": "False — the generic SQL-vs-NoSQL debate is a well-known interview pothole. State your choice and justify it with specific strengths tied to the requirements, e.g. 'Postgres, because ACID transactions protect these invariants at our scale.'"
+    }
+  ]
+}

@@ -1,0 +1,346 @@
+{
+  "section": "advanced-topics",
+  "subsection": "Time Series Databases",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/time-series-databases",
+  "concepts": [
+    "Recognizing a time-series workload: append-only time-ordered writes, no updates, recent-window aggregate reads",
+    "Update-in-place requires random read-modify-write I/O",
+    "Secondary B-tree index maintenance degrades insert throughput",
+    "Row stores repeat metadata per row; TSDBs store the series key once",
+    "Retention: expensive row DELETEs vs dropping whole time partitions",
+    "Memtables are kept sorted so flushes yield sorted, mergeable SSTables",
+    "SSTables are immutable; changes arrive as new entries reconciled by compaction",
+    "Compaction merges SSTables, removes duplicates/tombstones, and bounds read fan-out",
+    "LSM trade-off: write amplification and multi-SSTable reads",
+    "WAL provides crash durability for unflushed in-memory data",
+    "Delta encoding plus varint shrinks slowly-changing integer values",
+    "Delta-of-delta encoding makes regular timestamps nearly free",
+    "XOR compression exploits bit-similarity of consecutive floats",
+    "Per-series columnar block layout is what makes delta and XOR encodings effective",
+    "Compression gains depend on regular timestamps and smooth values",
+    "Time partitioning gives write locality — all ingest hits the current partition",
+    "Query-time partition pruning by time range",
+    "Partition sizing trade-off between file count and pruning/retention granularity",
+    "Bloom filters allow false positives but never false negatives",
+    "Per-SSTable Bloom filters skip disk reads on lookups",
+    "Bloom filter sizing rule of thumb (~10 bits per key for ~1% false positives)",
+    "Tiered retention via downsampling (raw recent data, coarser rollups with age)",
+    "Rollups should precompute recombinable aggregates (sum, count, min, max), not just averages",
+    "Downsampling permanently trades precision on old data",
+    "Interview move: challenge rigid full-resolution retention requirements with rollups",
+    "Block-level min/max metadata prunes blocks without reading them",
+    "Tags are indexed filter metadata; fields are the unindexed measured values",
+    "A series is one unique combination of measurement and tag values",
+    "Tag index is an in-memory inverted index; multi-tag queries intersect series lists",
+    "Reads merge the in-memory buffer with on-disk files",
+    "Aggregations are computed streaming, not by materializing all points",
+    "Data-block-plus-index file layout bounds a series lookup to about two seeks",
+    "Query execution composes pruning layers: time partitions, then tag index, then block offsets, then streaming aggregation",
+    "Series locality on disk beats Postgres's scattered heap fetches even with indexes",
+    "High-cardinality tags explode series count and the in-memory series index",
+    "Unbounded identifiers belong in fields — writable but not fast to filter on",
+    "TSDBs are a poor fit for Top-K ranking across enormous numbers of series",
+    "Stretch general-purpose databases first; only adopt a TSDB at a real bottleneck",
+    "The 10-100x advantage is conditional on time-series data assumptions holding",
+    "Purpose-built TSDBs vs general-purpose stores that merely use LSM engines",
+    "TimescaleDB brings time-series behavior to Postgres as an extension"
+  ],
+  "question_count": 41,
+  "questions": [
+    {
+      "id": "time-series-databases-01",
+      "type": "scenario",
+      "concept": "Recognizing a time-series workload: append-only time-ordered writes, no updates, recent-window aggregate reads",
+      "question": "A smart-thermostat startup is debating whether its telemetry justifies specialized storage. Devices report a temperature reading every 30 seconds, readings are never edited after they arrive, and the customer dashboard almost exclusively charts averages over the last few hours. Which properties of this workload make it a textbook time-series fit?",
+      "answer": "It has the defining traits: writes are appends that arrive in time order, existing points are never updated, and reads aggregate over recent time windows rather than fetching individual records. Every TSDB optimization — sequential appends, time partitioning, delta compression, downsampling — assumes exactly this shape."
+    },
+    {
+      "id": "time-series-databases-02",
+      "type": "scenario",
+      "concept": "Update-in-place requires random read-modify-write I/O",
+      "question": "A ride-hailing platform tracks driver telemetry by keeping one row per driver-metric pair and running an UPDATE with the newest value every five seconds across 400,000 drivers. Disk utilization is pinned at 100% while actual throughput is a small fraction of what the hardware's sequential write specs suggest. What is going wrong?",
+      "answer": "Update-in-place forces random I/O: every write must locate the row on disk, read it, modify it, and write it back, and disks handle orders of magnitude fewer random operations than sequential ones — a spinning disk manages roughly 100-200 random operations per second versus tens of thousands sequential. Appending new points to the end of a file instead would use the disk's full sequential throughput."
+    },
+    {
+      "id": "time-series-databases-03",
+      "type": "scenario",
+      "concept": "Secondary B-tree index maintenance degrades insert throughput",
+      "question": "An e-commerce company logs order-processing metrics into a Postgres table with B-tree indexes on timestamp, host, and metric_name. Inserts were fast at launch, but after months of growth insert throughput has fallen sharply, even though rows are small and arrive in time order. Why is ingestion slowing down?",
+      "answer": "Every insert must also update all three B-tree indexes, whose pages sit at scattered disk locations, and that maintenance cost grows as the indexes grow. The heap insert isn't the bottleneck — the index upkeep is."
+    },
+    {
+      "id": "time-series-databases-04",
+      "type": "scenario",
+      "concept": "Row stores repeat metadata per row; TSDBs store the series key once",
+      "question": "A logistics firm stores GPS pings as rows of (timestamp, vehicle_name, metric_name, value). The real information per ping is roughly a timestamp plus a float — about 16 bytes — yet each stored row consumes 60-100 bytes, and storage bills run several times the forecast. Where is the space going, and how does a time-series engine avoid it?",
+      "answer": "Each row repeats the full vehicle and metric identifier strings. A time-series engine factors those identifiers into a series key stored once, keeping only compressed timestamps and values in the data blocks."
+    },
+    {
+      "id": "time-series-databases-05",
+      "type": "scenario",
+      "concept": "Retention: expensive row DELETEs vs dropping whole time partitions",
+      "question": "A SaaS analytics vendor enforces 30-day retention with a nightly DELETE ... WHERE ts < now() - 30 days on a giant metrics table. The job runs for hours, thrashes the indexes, and the table keeps growing anyway. What should the team change, and why?",
+      "answer": "Partition the data by time and expire old data by dropping whole partitions. Dropping a partition is a near-instant file-level operation, while row-level DELETEs must scan, update every index, and suffer write amplification."
+    },
+    {
+      "id": "time-series-databases-06",
+      "type": "scenario",
+      "concept": "Memtables are kept sorted so flushes yield sorted, mergeable SSTables",
+      "question": "A chat-infrastructure team is building a custom LSM-style store. A developer proposes making the memtable an unsorted append-only array, arguing that keeping it sorted wastes CPU on the write path. What breaks downstream if they do this?",
+      "answer": "Flushes would produce unsorted files, ruining binary-search point lookups, efficient range scans, and merge-sort-based compaction. A sorted memtable (red-black tree or skip list) makes the flush a fast sequential write of an already-sorted SSTable."
+    },
+    {
+      "id": "time-series-databases-07",
+      "type": "scenario",
+      "concept": "SSTables are immutable; changes arrive as new entries reconciled by compaction",
+      "question": "An ad-tech pipeline discovers that a batch of impression metrics written an hour ago is wrong. An engineer proposes opening the on-disk SSTable and patching the bad values in place. Why is that not how the engine works, and what is the correct route?",
+      "answer": "SSTables are immutable — that is what keeps writes sequential and files safe for concurrent readers and compaction. Corrections are written as new entries (or tombstones for deletes), and background compaction merges them so the newest version wins."
+    },
+    {
+      "id": "time-series-databases-08",
+      "type": "scenario",
+      "concept": "Compaction merges SSTables, removes duplicates/tombstones, and bounds read fan-out",
+      "question": "To save CPU, a video-streaming ops team disables background compaction on their metrics store. Ingest keeps working, but over the following weeks read latency climbs steadily and disk usage grows faster than the ingest rate explains. What is happening?",
+      "answer": "Without compaction, small SSTables pile up, so every read must consult more and more files, and duplicate entries and tombstones are never purged. Compaction is the background merge that keeps file count and dead data bounded without blocking ingestion."
+    },
+    {
+      "id": "time-series-databases-09",
+      "type": "true_false",
+      "concept": "LSM trade-off: write amplification and multi-SSTable reads",
+      "question": "LSM trees deliver their high write throughput without giving anything up in return.",
+      "answer": "False — the costs are write amplification (the same data is rewritten repeatedly during compaction) and read overhead, since a lookup may have to check the memtable plus several SSTables."
+    },
+    {
+      "id": "time-series-databases-10",
+      "type": "scenario",
+      "concept": "WAL provides crash durability for unflushed in-memory data",
+      "question": "A payments-monitoring service accepts writes into an in-memory buffer and only flushes to disk files every few minutes. The node crashes between flushes, yet after restart no acknowledged data points are missing. Which mechanism made that possible, and how?",
+      "answer": "The write-ahead log: every point is appended to the WAL on disk before being acknowledged, so on restart the engine replays the WAL to rebuild the buffer contents that never made it into an SSTable."
+    },
+    {
+      "id": "time-series-databases-11",
+      "type": "scenario",
+      "concept": "Delta encoding plus varint shrinks slowly-changing integer values",
+      "question": "A weather platform stores barometric pressure as whole pascals — values near 101,325 that drift by only a few units between samples. An engineer switches from storing each raw 4-byte reading to storing the difference from the previous reading, encoded as a variable-length integer, and files shrink several-fold. Why does this combination work?",
+      "answer": "Adjacent readings differ by tiny amounts, so the deltas are small integers, and varint encoding stores a small number in a single byte where the raw value needed several. Neither trick alone suffices: deltas in fixed-width slots save nothing, and varints on the large raw values stay multi-byte."
+    },
+    {
+      "id": "time-series-databases-12",
+      "type": "scenario",
+      "concept": "Delta-of-delta encoding makes regular timestamps nearly free",
+      "question": "An uptime-monitoring agent reports a heartbeat exactly every 10 seconds. The storage engine records the timestamps of millions of these heartbeats using almost no space. What encoding achieves this, and why does it work here?",
+      "answer": "Delta-of-delta encoding: the gaps between timestamps are all 10, so the differences between successive gaps are all zero, which compresses to essentially nothing. Facebook's Gorilla paper showed this averages as low as 1 bit per timestamp for regular data."
+    },
+    {
+      "id": "time-series-databases-13",
+      "type": "scenario",
+      "concept": "XOR compression exploits bit-similarity of consecutive floats",
+      "question": "A fitness wearable streams heart-rate values that change gradually. Its storage engine XORs each float with the previous value before writing. Why would XOR-ing consecutive measurements help compression?",
+      "answer": "Consecutive similar floats share the sign, exponent, and most mantissa bits, so their XOR is mostly zero bits, which run-length encodes down to just the few meaningful bits — about 1.37 bytes per 8-byte value on typical time-series data."
+    },
+    {
+      "id": "time-series-databases-14",
+      "type": "scenario",
+      "concept": "Per-series columnar block layout is what makes delta and XOR encodings effective",
+      "question": "A metrics engine buffers points from thousands of servers, and instead of flushing them as one big time-ordered stream, it groups points by series key and writes each series into its own block. A new engineer argues a single time-sorted file would be simpler. What would that simplification cost?",
+      "answer": "Delta-of-delta and XOR encodings exploit the similarity between consecutive points of the same series; interleaving thousands of unrelated series makes adjacent values arbitrary, gutting the compression. Per-series blocks also keep each series contiguous, so a query reads only the blocks for the series it needs."
+    },
+    {
+      "id": "time-series-databases-15",
+      "type": "scenario",
+      "concept": "Compression gains depend on regular timestamps and smooth values",
+      "question": "A ticketing platform stores purchase events in a time-series engine: timestamps arrive in irregular bursts and the recorded values (seat prices) jump around arbitrarily. The team is disappointed that compression is barely better than a plain row store. Why did the advertised compression not materialize?",
+      "answer": "Delta-of-delta and XOR compression bank on regular timestamps and small value deltas. Irregular event times and erratic values produce large noisy deltas, so the specialized encodings have nothing to exploit."
+    },
+    {
+      "id": "time-series-databases-16",
+      "type": "scenario",
+      "concept": "Time partitioning gives write locality — all ingest hits the current partition",
+      "question": "A food-delivery company sharded its metrics files by hash of metric name, so every incoming batch touches nearly every file. After switching to partitioning by time window, ingest concentrates on a single active file and throughput improves. What property of time partitioning explains this?",
+      "answer": "Write locality: incoming data always belongs to the current time partition, so ingest appends to one hot partition instead of scattering writes across many files."
+    },
+    {
+      "id": "time-series-databases-17",
+      "type": "scenario",
+      "concept": "Query-time partition pruning by time range",
+      "question": "A social-feed analytics dashboard mostly runs 'last hour' queries. After moving the metrics store to daily time partitions, those queries stop scanning 90 days of data and touch only the newest partition. What is the engine doing?",
+      "answer": "Partition pruning: each partition covers a known time window, so the planner intersects the query's time range with partition boundaries and skips every partition that cannot contain matching data."
+    },
+    {
+      "id": "time-series-databases-18",
+      "type": "scenario",
+      "concept": "Partition sizing trade-off between file count and pruning/retention granularity",
+      "question": "A B2B monitoring SaaS is choosing a partition size. One engineer wants per-minute partitions for maximum pruning; another wants per-year partitions to keep the file count down. Typical queries span a few hours and retention is 90 days. What is wrong with each extreme?",
+      "answer": "Per-minute partitions force a few-hour query to open hundreds of files and drown in partition metadata; per-year partitions destroy pruning and make 90-day retention impossible to enforce by dropping partitions. A middle size like daily matches both the query span and the retention granularity."
+    },
+    {
+      "id": "time-series-databases-19",
+      "type": "true_false",
+      "concept": "Bloom filters allow false positives but never false negatives",
+      "question": "An SSTable's Bloom filter can occasionally cause a query to miss data that really is present in the file.",
+      "answer": "False — Bloom filters never produce false negatives, so a 'definitely not here' answer is always safe to act on. The only error mode is a false positive: an occasional wasted disk read when the filter says 'maybe' but the key is absent."
+    },
+    {
+      "id": "time-series-databases-20",
+      "type": "scenario",
+      "concept": "Per-SSTable Bloom filters skip disk reads on lookups",
+      "question": "A hotel-booking company's metrics store accumulates dozens of SSTables per partition, and each series lookup was issuing a disk read against nearly every file. The team adds a small in-memory structure alongside each SSTable, and lookups now read only one or two files. What did they add, and how does it help?",
+      "answer": "A Bloom filter per SSTable. Before reading a file the engine asks the filter whether the key might be present; a 'definitely not' answer skips the file with zero I/O, collapsing dozens of potential reads into one or two."
+    },
+    {
+      "id": "time-series-databases-21",
+      "type": "mcq2",
+      "concept": "Bloom filter sizing rule of thumb (~10 bits per key for ~1% false positives)",
+      "question": "Roughly how much memory does a well-tuned Bloom filter need per key to keep its false-positive rate around 1%?",
+      "options": [
+        "About 10 bits per key",
+        "About 10 bytes per key"
+      ],
+      "answer": "About 10 bits per key — that budget is the standard tuning point that yields roughly a 1% false-positive rate."
+    },
+    {
+      "id": "time-series-databases-22",
+      "type": "scenario",
+      "concept": "Tiered retention via downsampling (raw recent data, coarser rollups with age)",
+      "question": "An energy-grid operator must keep a year of meter data, but dashboards need fine detail only for recent incidents; beyond a week, analysts look at broad trends. Storing everything at 10-second resolution for a year is blowing the storage budget. What scheme should they adopt?",
+      "answer": "Tiered retention: keep raw 10-second data for a short recent window, then roll older data up to 1-minute, 5-minute, and eventually 1-hour averages as it ages. Trends survive at a tiny fraction of the storage — an hourly rollup is hundreds of times smaller than raw."
+    },
+    {
+      "id": "time-series-databases-23",
+      "type": "scenario",
+      "concept": "Rollups should precompute recombinable aggregates (sum, count, min, max), not just averages",
+      "question": "An uptime-monitoring vendor's rollup job stores only the average latency per day. When a customer requests a monthly average, engineering averages the 30 daily averages — and the result is wrong whenever days have different sample counts. Peak-latency queries are impossible entirely. What should the rollups have stored?",
+      "answer": "Per-interval sum, count, min, and max. Sums and counts recombine into correct averages over any window, and min/max preserve the extremes that a bare average destroys."
+    },
+    {
+      "id": "time-series-databases-24",
+      "type": "scenario",
+      "concept": "Downsampling permanently trades precision on old data",
+      "question": "A team configured their metrics store to keep only 1-hour averages for anything older than 30 days. Two months later, an incident review needs to examine a 30-second CPU spike from that period — and it is simply not there. What limitation did they hit?",
+      "answer": "Downsampling is a one-way trade of precision for storage: once raw points are rolled up and discarded, sub-interval detail is gone forever. A 30-second spike disappears inside an hourly average."
+    },
+    {
+      "id": "time-series-databases-25",
+      "type": "scenario",
+      "concept": "Interview move: challenge rigid full-resolution retention requirements with rollups",
+      "question": "In a system design interview, the interviewer states that metrics must be kept at 10-second resolution for one full year. The candidate silently designs storage for exactly that. What stronger move did the candidate miss?",
+      "answer": "Push back on the requirement: propose full resolution for a recent window and coarser rollups for older data, since year-old 10-second detail is rarely useful. Even if the interviewer declines, questioning rigid requirements is the kind of judgment that marks a staff-level candidate."
+    },
+    {
+      "id": "time-series-databases-26",
+      "type": "scenario",
+      "concept": "Block-level min/max metadata prunes blocks without reading them",
+      "question": "A smart-factory dashboard queries 'show intervals where vibration exceeded 90'. The storage engine answers after decompressing only a handful of data blocks, even though the partition holds thousands. What allowed it to ignore the rest?",
+      "answer": "Each block carries metadata such as its min/max values and timestamps; any block whose max is below 90 cannot contain a match and is pruned without ever being read or decompressed. It stacks on top of time-based partition pruning as another filtering layer."
+    },
+    {
+      "id": "time-series-databases-27",
+      "type": "scenario",
+      "concept": "Tags are indexed filter metadata; fields are the unindexed measured values",
+      "question": "A smart-home platform models temperature readings with room as a field and the temperature value as a tag. Filtering 'all readings for the kitchen' is slow, and the series count grows with every distinct temperature ever recorded. What did they get backwards?",
+      "answer": "They inverted tags and fields. Tags are indexed metadata you filter by (room); fields are the measured values (temperature). With temperature as a tag, every distinct reading spawns a new series, while the attribute they actually filter on has no index."
+    },
+    {
+      "id": "time-series-databases-28",
+      "type": "scenario",
+      "concept": "A series is one unique combination of measurement and tag values",
+      "question": "An APM vendor's store held 50,000 series (1,000 hosts times 50 metrics). After adding one new tag, env, with five possible values, the series count jumped to roughly 250,000. Why did a single tag multiply the total?",
+      "answer": "Each unique combination of tag values defines its own series, so the series count is the product of tag cardinalities: 1,000 hosts times 50 metrics times 5 envs. Adding a tag multiplies the count, it does not add to it."
+    },
+    {
+      "id": "time-series-databases-29",
+      "type": "scenario",
+      "concept": "Tag index is an in-memory inverted index; multi-tag queries intersect series lists",
+      "question": "A CDN monitoring query filters on region='eu' AND tier='edge'. The engine identifies exactly which series match before touching disk at all. What structure makes this possible, and how is the AND evaluated?",
+      "answer": "An in-memory inverted index — the same structure that powers Elasticsearch, but mapping tag values to series instead of words to documents. The engine fetches the series list for each predicate and intersects them, so only the surviving series' blocks are ever read from disk."
+    },
+    {
+      "id": "time-series-databases-30",
+      "type": "scenario",
+      "concept": "Reads merge the in-memory buffer with on-disk files",
+      "question": "A live-ops gaming dashboard queries the last five minutes of match metrics and gets complete results, even though the storage engine has not flushed anything to disk in ten minutes. Where did the recent points come from?",
+      "answer": "Queries merge data from the in-memory buffer with the on-disk files. The newest points are served straight from the memtable; only older time ranges require reading disk."
+    },
+    {
+      "id": "time-series-databases-31",
+      "type": "scenario",
+      "concept": "Aggregations are computed streaming, not by materializing all points",
+      "question": "A climate-research portal computes the yearly mean of a sensor that produced hundreds of millions of points, on a query node with a few gigabytes of RAM, without running out of memory. How can the engine do this?",
+      "answer": "It aggregates in streaming fashion: as blocks are read it maintains running state (a sum and a count for a mean) and discards the points, so memory use stays constant no matter how much data the query spans."
+    },
+    {
+      "id": "time-series-databases-32",
+      "type": "scenario",
+      "concept": "Data-block-plus-index file layout bounds a series lookup to about two seeks",
+      "question": "Profiling a time-series storage engine shows that fetching one series from a data file costs about two disk seeks — whether the file holds a megabyte or fifty gigabytes. What about the file's layout produces this constant cost?",
+      "answer": "The file contains compressed per-series data blocks plus an index mapping each series key to its block offsets. A lookup is one seek into the index and one seek to the data block, independent of file size."
+    },
+    {
+      "id": "time-series-databases-33",
+      "type": "scenario",
+      "concept": "Query execution composes pruning layers: time partitions, then tag index, then block offsets, then streaming aggregation",
+      "question": "An observability platform runs 'average CPU for prod hosts in us-west over the last hour' against a store holding 90 days of data and thousands of series, yet the engine answers after reading just two compressed blocks. Trace the successive steps that eliminated nearly everything else before any data was read.",
+      "answer": "The time filter first prunes to the partitions overlapping the last hour; the in-memory tag index then intersects the region and env series lists down to a couple of matching series; the file index maps those series to specific block offsets, and only those blocks are decompressed and fed through a streaming average. Each layer discards data without reading it, so query cost tracks the result size rather than the dataset size."
+    },
+    {
+      "id": "time-series-databases-34",
+      "type": "scenario",
+      "concept": "Series locality on disk beats Postgres's scattered heap fetches even with indexes",
+      "question": "An observability vendor benchmarks the same filtered-average query on Postgres (with proper B-tree indexes on the filter columns) and on their time-series engine. Postgres finds the matching row IDs quickly but still loses badly. Where does Postgres spend its time?",
+      "answer": "Fetching each matching row from scattered heap pages — thousands of random reads — and then extracting the value column row by row before averaging. The time-series engine reads each matching series' points from contiguous compressed blocks, so the same data arrives in a few sequential reads."
+    },
+    {
+      "id": "time-series-databases-35",
+      "type": "scenario",
+      "concept": "High-cardinality tags explode series count and the in-memory series index",
+      "question": "A social app adds user_id — about 10 million distinct users — as a tag on its engagement metrics. Within days the database's memory footprint explodes and nodes start getting OOM-killed. What is going wrong?",
+      "answer": "Cardinality explosion: every unique tag combination becomes a series with its own entry in the in-memory series index, and 10 million users multiplied across metrics and other tags yields billions of potential series. The index no longer fits in memory and queries crawl."
+    },
+    {
+      "id": "time-series-databases-36",
+      "type": "scenario",
+      "concept": "Unbounded identifiers belong in fields — writable but not fast to filter on",
+      "question": "After backing out its user_id tag, an API-gateway SaaS still needs to record the request ID alongside each latency measurement, and support occasionally looks one up. Where should request_id live in the data model, and what does that placement cost?",
+      "answer": "Store it as a field. Fields are written but not indexed, so ingest stays cheap and the series count stays bounded — but looking up a specific request ID means scanning data, because you give up the tag index's fast filtering for that value."
+    },
+    {
+      "id": "time-series-databases-37",
+      "type": "scenario",
+      "concept": "TSDBs are a poor fit for Top-K ranking across enormous numbers of series",
+      "question": "A music-streaming service wants an hourly 'top 100 most-played songs' chart and proposes a time-series database with song_id as a tag, one series per song. Why is this the wrong tool?",
+      "answer": "Top-K requires sorting and aggregating across a huge number of series, which TSDBs are not designed to do — they optimize reading a small set of series at a time — and millions of song IDs as tag values is itself a cardinality explosion. Having time-stamped data does not mean you need a time-series database."
+    },
+    {
+      "id": "time-series-databases-38",
+      "type": "scenario",
+      "concept": "Stretch general-purpose databases first; only adopt a TSDB at a real bottleneck",
+      "question": "In an interview, a candidate is asked to design the metrics feature for a small SaaS product — a few hundred writes per second — and immediately proposes InfluxDB, then cannot answer follow-up questions about how it works. What should they have done instead?",
+      "answer": "Start with a general-purpose database — Postgres comfortably handles that write rate — and reach for a specialized TSDB only when a genuine bottleneck appears. Falling back to technology you actually understand beats winging one you cannot explain."
+    },
+    {
+      "id": "time-series-databases-39",
+      "type": "true_false",
+      "concept": "The 10-100x advantage is conditional on time-series data assumptions holding",
+      "question": "A time-series database will be roughly 10-100x faster than a general-purpose database on any dataset that includes a timestamp column.",
+      "answer": "False — the 10-100x gains apply only to the target workload where the underlying assumptions hold: bounded tag cardinality, mostly regular timestamps, and small deltas between values. When those assumptions break, a TSDB can actually perform worse than Postgres."
+    },
+    {
+      "id": "time-series-databases-40",
+      "type": "mcq2",
+      "concept": "Purpose-built TSDBs vs general-purpose stores that merely use LSM engines",
+      "question": "Which of these is a database purpose-built for time-series workloads, rather than a general-purpose store that happens to use an LSM storage engine?",
+      "options": [
+        "Prometheus",
+        "Cassandra"
+      ],
+      "answer": "Prometheus — like InfluxDB and TimescaleDB, it is built specifically for time-series metrics, whereas Cassandra is a general-purpose wide-column store that uses LSM trees under the hood."
+    },
+    {
+      "id": "time-series-databases-41",
+      "type": "scenario",
+      "concept": "TimescaleDB brings time-series behavior to Postgres as an extension",
+      "question": "A mid-size company runs its whole product on Postgres and has deep operational expertise in it, but metrics ingest is starting to strain the main tables. The team wants time partitioning, compression, and retention policies without adopting and learning an entirely unfamiliar database. Which option fits, and why?",
+      "answer": "TimescaleDB — it is implemented as a Postgres extension, so its hypertables add automatic time partitioning, columnar compression, and retention policies while keeping standard SQL, drivers, and the team's existing operational tooling. For a Postgres shop it is the lowest-risk path to time-series performance."
+    }
+  ]
+}

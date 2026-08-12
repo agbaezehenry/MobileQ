@@ -1,0 +1,266 @@
+{
+  "section": "patterns",
+  "subsection": "Scaling Reads",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/scaling-reads",
+  "concepts": [
+    "Identifying read-heavy workloads via read-to-write ratio",
+    "Physical ceilings of a single database node",
+    "Escalation order: optimize in-database before adding infrastructure",
+    "Missing index causes full table scans that degrade with data growth",
+    "Composite index matching the query's filter-plus-sort shape",
+    "Indexes impose a per-write maintenance cost",
+    "Use the query planner (EXPLAIN) to diagnose, not guess",
+    "Vertical scaling: simplest lever, but a ceiling and a single point of failure",
+    "Denormalization: precomputed aggregates instead of read-time computation",
+    "Denormalization by duplicating hot fields to eliminate read-time joins",
+    "Read replicas: route reads to followers, writes to the primary",
+    "Replication lag produces stale reads",
+    "Asynchronous replication is the default because synchronous replication ties write latency and availability to every replica",
+    "Read-your-own-writes: pin post-write reads to the primary",
+    "Replicas duplicate the full dataset — they don't scale data volume",
+    "Choosing replicas over sharding for a pure read-throughput problem",
+    "Cache-aside mechanics: populate the cache on miss",
+    "TTL as a freshness-versus-database-load dial",
+    "Miss rate, not hit rate, determines residual database load",
+    "Undersized caches evict entries before TTL expiry, capping the hit ratio",
+    "Why in-memory caches beat a well-indexed database on latency",
+    "CDN/edge caching to beat geographic round-trip latency",
+    "Edge caching is for shared content, not personalized responses",
+    "Hot key: one popular key saturates the single node that owns it",
+    "Hot key mitigation: suffixed key copies and/or in-process caches",
+    "Cache stampede: synchronized misses on expiry of a popular entry",
+    "Stampede mitigation: single-flight rebuild with stale serving",
+    "Write-through / invalidate-on-write for immediately visible updates",
+    "Strong-consistency reads must skip replicas and caches",
+    "Don't deploy read-scaling machinery at trivial scale",
+    "Interview heuristic: justify read-scaling layers with workload numbers"
+  ],
+  "question_count": 31,
+  "questions": [
+    {
+      "id": "scaling-reads-01",
+      "type": "scenario",
+      "concept": "Identifying read-heavy workloads via read-to-write ratio",
+      "question": "A news reader app's team is planning capacity for next year and assumes they need to beef up write throughput because 'articles are the product.' Metrics show each published article is written once but fetched about 40,000 times, and article publishes are a few hundred per day. Where should the scaling investment actually go, and why?",
+      "answer": "Into the read path. The workload is extremely read-heavy (tens of thousands of reads per write), so replicas and caching on reads will move the needle; write capacity is nowhere near the bottleneck."
+    },
+    {
+      "id": "scaling-reads-02",
+      "type": "scenario",
+      "concept": "Physical ceilings of a single database node",
+      "question": "A meal-kit startup runs everything on one large Postgres box. As traffic grows, engineers keep rewriting queries and tweaking config, but CPU sits at 100%, the buffer cache is thrashing, and disk IOPS are maxed even though every query is already well-indexed. Why won't further query tuning fix this?",
+      "answer": "They've hit the machine's physical limits — a single node has finite CPU cycles, RAM, and disk I/O. Once well-tuned queries saturate the hardware, the only options are bigger hardware or spreading load across machines; no amount of SQL polish creates more IOPS."
+    },
+    {
+      "id": "scaling-reads-03",
+      "type": "scenario",
+      "concept": "Escalation order: optimize in-database before adding infrastructure",
+      "question": "A project-management SaaS has one slow screen. An engineer proposes a design doc adding Redis, three read replicas, and a routing layer. The database is a modest instance serving 150 QPS, and the slow screen's main query has no index and scans a 30M-row table. What should the team do instead, and why?",
+      "answer": "Add the index (and generally optimize within the database) first. The escalation ladder starts with in-database fixes because they solve most problems at this scale for near-zero operational cost; replicas and caches add infrastructure, consistency issues, and ops burden that 150 QPS doesn't justify."
+    },
+    {
+      "id": "scaling-reads-04",
+      "type": "scenario",
+      "concept": "Missing index causes full table scans that degrade with data growth",
+      "question": "An e-commerce marketplace looks up orders by customer email on the support dashboard. The lookup took 20ms at launch, 400ms at 5M orders, and now times out at 50M orders — the slowdown tracks table size almost linearly. What is going wrong?",
+      "answer": "The query is doing a full table scan because there's no index on the email column, so cost grows linearly with row count. An index turns the lookup into a tree traversal that stays fast (roughly logarithmic) as the table grows."
+    },
+    {
+      "id": "scaling-reads-05",
+      "type": "scenario",
+      "concept": "Composite index matching the query's filter-plus-sort shape",
+      "question": "A team chat app loads a channel with: WHERE channel_id = ? ORDER BY created_at DESC LIMIT 50. The messages table has separate single-column indexes on channel_id and on created_at, yet the query still sorts millions of rows for big channels. What should the team change, and why?",
+      "answer": "Create one composite index on (channel_id, created_at). It lets the database jump to the channel's rows already ordered by time and read just 50 entries; two separate indexes can't deliver filtered results pre-sorted, forcing a sort step."
+    },
+    {
+      "id": "scaling-reads-06",
+      "type": "scenario",
+      "concept": "Indexes impose a per-write maintenance cost",
+      "question": "An IoT platform's ops team, chasing faster dashboard queries, added nine indexes to the sensor-readings table. Dashboards did get quicker, but device data ingestion throughput dropped 40% and write latency spiked. What is going wrong?",
+      "answer": "Every insert now has to update all nine index structures in addition to the table, so writes pay the cost of the read optimization. They should keep only the indexes real queries use — indexing is a read-for-write trade, not free."
+    },
+    {
+      "id": "scaling-reads-07",
+      "type": "scenario",
+      "concept": "Use the query planner (EXPLAIN) to diagnose, not guess",
+      "question": "A ride-hailing company's trip-history endpoint is fast in staging but slow in production. One engineer insists the query 'obviously uses the index' and wants to start provisioning replicas. What is the cheap first step the team should take before touching infrastructure?",
+      "answer": "Run EXPLAIN (the query plan) against production-scale data. It shows definitively whether the index is used or the planner is scanning; production data distribution often flips plans, and guessing wastes money on infrastructure that may not address the real cause."
+    },
+    {
+      "id": "scaling-reads-08",
+      "type": "scenario",
+      "concept": "Vertical scaling: simplest lever, but a ceiling and a single point of failure",
+      "question": "A fintech firm's internal reporting database is straining under analyst read load. The team has a hardware budget, no bandwidth for application changes this quarter, and the working set is 200GB on a machine with 64GB of RAM. What is the pragmatic near-term move, and what is its limitation?",
+      "answer": "Scale vertically — move to a machine with enough RAM to hold the working set (plus faster NVMe storage), which serves most reads from memory with zero code changes. The limitation: there's a ceiling on how big one machine gets, cost grows steeply, and it remains a single point of failure, so it buys time rather than ending the problem."
+    },
+    {
+      "id": "scaling-reads-09",
+      "type": "scenario",
+      "concept": "Denormalization: precomputed aggregates instead of read-time computation",
+      "question": "A photo-sharing app displays a like count under every photo by running COUNT(*) over the likes table at render time. Viral photos with millions of likes now time out, and feeds full of popular photos are slow. What should the team change, and what does it cost them?",
+      "answer": "Store a precomputed like_count on the photo row (incremented when likes are written) instead of counting at read time — reads become a single cheap column fetch. The cost is write-path complexity and keeping the counter consistent with the source-of-truth likes table."
+    },
+    {
+      "id": "scaling-reads-10",
+      "type": "scenario",
+      "concept": "Denormalization by duplicating hot fields to eliminate read-time joins",
+      "question": "A microblogging app renders its home feed with a query that joins posts to users to profiles to media — five tables per page load — and join cost now dominates read latency even though every join key is indexed. The schema is fully normalized and writes are a tiny fraction of traffic. What schema change would cut the read cost, and what new burden does it create?",
+      "answer": "Denormalize: copy the fields the feed actually renders (author username, avatar URL, media thumbnail) directly onto the post rows so a feed read is a single-table fetch with no joins. The burden shifts to writes — when a user renames themselves or changes their avatar, every duplicated copy must be updated, so the write path takes on fan-out and consistency work."
+    },
+    {
+      "id": "scaling-reads-11",
+      "type": "scenario",
+      "concept": "Read replicas: route reads to followers, writes to the primary",
+      "question": "A B2B analytics product's customer dashboards fire thousands of read queries per second against the primary database, which also handles a modest stream of data-ingest writes. Query tuning is done, the box is already large, and read load keeps growing with the customer count. What architecture change fits here, and how does traffic get divided?",
+      "answer": "Add read replicas. Writes continue to the primary, which replicates to followers, and the dashboard read traffic is load-balanced across the replicas — read capacity then scales roughly linearly by adding replicas without touching the write path."
+    },
+    {
+      "id": "scaling-reads-12",
+      "type": "scenario",
+      "concept": "Replication lag produces stale reads",
+      "question": "A concert ticketing site serves seat-map reads from read replicas and processes purchases on the primary. Occasionally a user sees a seat as available, clicks it, and gets 'already sold' — support confirms those seats sold a few seconds before the user loaded the map. What is going wrong?",
+      "answer": "Replication lag. Replication to the replicas is asynchronous, so the seat map reflects the primary's state from a few seconds ago; reads from replicas are inherently slightly stale. The purchase path correctly rejects on the primary, but the display lies during the lag window."
+    },
+    {
+      "id": "scaling-reads-13",
+      "type": "scenario",
+      "concept": "Asynchronous replication is the default because synchronous replication ties write latency and availability to every replica",
+      "question": "Tired of stale-read bug reports, an engineer at a job-listings site proposes reconfiguring all five read replicas to fully synchronous replication so every read is guaranteed fresh. What would this do to the write path, and why do read-replica setups accept lag instead?",
+      "answer": "Every write would have to wait for all five replicas to acknowledge before committing, multiplying write latency, and one slow or dead replica would stall writes entirely — write availability becomes hostage to replica health. That's why replication to read replicas is asynchronous by default, and staleness is handled at the read layer (for example, primary reads for the few paths that need freshness)."
+    },
+    {
+      "id": "scaling-reads-14",
+      "type": "scenario",
+      "concept": "Read-your-own-writes: pin post-write reads to the primary",
+      "question": "A dating app user edits their profile bio, hits save, and the confirmation page shows the old bio; refreshing a minute later shows the new one. Writes go to the primary and profile reads go to replicas. What should the team change, and why?",
+      "answer": "Pin the author's reads to the primary for a short window after they write (or use session-consistent routing so post-write reads see the primary) — read-your-own-writes consistency. The post-save read raced replication and hit a replica that hadn't applied the update yet; other users can tolerate the lag, but an author seeing their own edit vanish reads as data loss."
+    },
+    {
+      "id": "scaling-reads-15",
+      "type": "scenario",
+      "concept": "Replicas duplicate the full dataset — they don't scale data volume",
+      "question": "A podcast platform's metadata database has grown to 12TB and is growing fast. The lead proposes 'just keep adding read replicas as we grow' as the long-term storage strategy. What is wrong with this plan?",
+      "answer": "Every replica stores a complete copy of all 12TB, so replicas multiply storage cost and do nothing about dataset growth — they only add read throughput. Scaling data volume requires partitioning the data (sharding), not copying it."
+    },
+    {
+      "id": "scaling-reads-16",
+      "type": "mcq2",
+      "concept": "Choosing replicas over sharding for a pure read-throughput problem",
+      "question": "A gaming-stats service has a 300GB database that fits comfortably on one machine. Writes are light, but read traffic from player profile pages is overwhelming the database. Which approach fits better?",
+      "options": [
+        "Shard the database across multiple machines by player ID",
+        "Add read replicas and distribute the profile reads across them"
+      ],
+      "answer": "Add read replicas and distribute the profile reads across them — the problem is read throughput, not data size or write volume; sharding would add cross-shard query and rebalancing complexity to solve a problem replicas handle simply."
+    },
+    {
+      "id": "scaling-reads-17",
+      "type": "scenario",
+      "concept": "Cache-aside mechanics: populate the cache on miss",
+      "question": "A recipe website added a Redis cache in front of its database. On each request the code checks Redis, and on a miss it queries the database and returns the result to the user. After a week the cache hit ratio is still near zero and DB load hasn't dropped. What is going wrong?",
+      "answer": "The miss path never writes the result back into Redis. Cache-aside requires the application to populate the cache after a miss (read DB, set key, return) — without that step nothing ever lands in the cache, so every request misses forever."
+    },
+    {
+      "id": "scaling-reads-18",
+      "type": "scenario",
+      "concept": "TTL as a freshness-versus-database-load dial",
+      "question": "A sports app caches live game scores with a 30-minute TTL and gets complaints that scores are ancient during games. An engineer proposes deleting the cache entirely; another proposes a 2-second TTL. What trade-off are they actually negotiating, and what's the sensible framing?",
+      "answer": "TTL trades freshness against database load: long TTLs mean stale data, short TTLs mean more misses hitting the DB. The answer isn't cache-or-no-cache — it's picking a TTL that matches the data's tolerable staleness (a few seconds for live scores still absorbs most of the read traffic)."
+    },
+    {
+      "id": "scaling-reads-19",
+      "type": "scenario",
+      "concept": "Miss rate, not hit rate, determines residual database load",
+      "question": "An e-learning platform's cache shows a 90% hit ratio, but the database is nearing capacity as traffic grows, and a director argues the cache 'is already doing its job' so they should buy a bigger database. Why might improving the cache to 99% be the stronger move?",
+      "answer": "Database load is set by the miss rate: going from 90% to 99% hits cuts misses from 10% to 1% — a 10x reduction in DB read traffic, far more impact than an incremental hardware bump. Chasing the last percentage points of hit ratio (better keys, longer TTLs, warming) is leverage, not polish."
+    },
+    {
+      "id": "scaling-reads-20",
+      "type": "scenario",
+      "concept": "Undersized caches evict entries before TTL expiry, capping the hit ratio",
+      "question": "An online bookstore caches rendered product pages in Redis with a generous 24-hour TTL, yet the hit ratio is stuck around 55%, and most misses are for pages that were cached earlier that same day. Redis is running at its configured memory limit. What is actually limiting the hit ratio?",
+      "answer": "The cache is undersized: Redis at its memory ceiling evicts entries (typically LRU) long before their TTL expires, so the working set doesn't fit and recently cached pages get pushed out. The fix is capacity or economy — more cache memory, or smaller/fewer cached values — not longer TTLs, which are irrelevant once eviction rather than expiry is removing keys."
+    },
+    {
+      "id": "scaling-reads-21",
+      "type": "mcq2",
+      "concept": "Why in-memory caches beat a well-indexed database on latency",
+      "question": "What is the primary reason a Redis cache serves a lookup orders of magnitude faster than a well-indexed relational database serving the same data?",
+      "options": [
+        "It answers from RAM with a simple key lookup, skipping disk I/O and SQL query processing entirely",
+        "It uses a more efficient network protocol than databases use"
+      ],
+      "answer": "It answers from RAM with a simple key lookup, skipping disk I/O and SQL query processing entirely — memory access is orders of magnitude faster than disk, and there's no parsing, planning, or index traversal on the hot path."
+    },
+    {
+      "id": "scaling-reads-22",
+      "type": "scenario",
+      "concept": "CDN/edge caching to beat geographic round-trip latency",
+      "question": "A meditation app hosts everything in a Virginia data center. Server-side p50 latency is 40ms, yet users in Sydney report images and audio taking 2+ seconds to load. The team has profiled the backend and found nothing to fix. What is going wrong, and what should they add?",
+      "answer": "The bottleneck is geography, not the servers — every asset pays multiple ~200ms round trips across the Pacific. Put the static assets on a CDN so they're cached at edge locations near Sydney; no backend optimization can beat the speed of light to Virginia."
+    },
+    {
+      "id": "scaling-reads-23",
+      "type": "scenario",
+      "concept": "Edge caching is for shared content, not personalized responses",
+      "question": "A video-streaming service, proud of its CDN win on thumbnails, also configures the CDN to cache the /api/continue-watching response. Soon users report seeing strangers' half-watched shows on their home screen. What is going wrong?",
+      "answer": "They edge-cached a personalized response: the CDN stored one user's continue-watching list and served it to everyone hitting that URL from the same edge. CDN caching fits content shared across users; per-user API responses must bypass the edge cache (or be keyed per user, which destroys the benefit anyway)."
+    },
+    {
+      "id": "scaling-reads-24",
+      "type": "scenario",
+      "concept": "Hot key: one popular key saturates the single node that owns it",
+      "question": "A social network runs a 20-node Redis cluster. When a celebrity posts, the app slows to a crawl; monitoring shows one Redis node at 100% CPU and network saturation while the other 19 sit nearly idle. What is going wrong?",
+      "answer": "A hot key. The celebrity post's cache key hashes to exactly one node, so millions of concurrent reads for that single key all land on that node — cluster capacity is irrelevant because one key's traffic can't spread across nodes on its own."
+    },
+    {
+      "id": "scaling-reads-25",
+      "type": "scenario",
+      "concept": "Hot key mitigation: suffixed key copies and/or in-process caches",
+      "question": "A live-video platform knows big streams will keep melting whichever cache node holds the popular stream's metadata key. The data is small and identical for every viewer. Name a concrete mitigation and how it spreads the load.",
+      "answer": "Write the value under N suffixed copies (stream:123#1 through #N) that hash to different nodes and have readers pick a suffix at random — the hot traffic spreads across N nodes. Alternatively (or additionally), cache the value in-process on each app server for a few seconds so most reads never reach Redis at all."
+    },
+    {
+      "id": "scaling-reads-26",
+      "type": "scenario",
+      "concept": "Cache stampede: synchronized misses on expiry of a popular entry",
+      "question": "A marketing-analytics SaaS caches an expensive account-overview aggregate with a 10-minute TTL. Like clockwork, every 10 minutes the database CPU spikes to 100% for about a minute and some requests time out, then everything calms down. What is going wrong?",
+      "answer": "A cache stampede (thundering herd): when the popular entry expires, every concurrent request misses simultaneously and each one runs the expensive query to rebuild the same value, briefly multiplying load on the DB by the full concurrency level."
+    },
+    {
+      "id": "scaling-reads-27",
+      "type": "scenario",
+      "concept": "Stampede mitigation: single-flight rebuild with stale serving",
+      "question": "A flight-search site has diagnosed that when a popular route's cached results expire, hundreds of workers simultaneously rerun the same expensive fare computation. What should the team change so an expiry no longer multiplies load, and how does it behave for users during the rebuild?",
+      "answer": "Make the rebuild single-flight: the first request to miss takes a lock and recomputes while everyone else either waits briefly or is served the previous stale value (stale-while-revalidate). One computation replaces hundreds, and users see at worst slightly outdated fares for a moment; jittering TTLs also prevents synchronized expiries."
+    },
+    {
+      "id": "scaling-reads-28",
+      "type": "scenario",
+      "concept": "Write-through / invalidate-on-write for immediately visible updates",
+      "question": "A flash-sale sneaker store caches per-item stock counts with a 5-minute TTL using cache-aside. During drops, buyers keep seeing items as in stock minutes after they sell out, causing failed checkouts and angry customers. What should the team change, and why?",
+      "answer": "Stop relying on TTL expiry for freshness: when stock changes, synchronously update the cached value (write-through) or delete the key so the next read repopulates from the DB (invalidate-on-write). TTL-based expiry guarantees a staleness window, which is unacceptable for data whose changes must be visible immediately."
+    },
+    {
+      "id": "scaling-reads-29",
+      "type": "scenario",
+      "concept": "Strong-consistency reads must skip replicas and caches",
+      "question": "A brokerage app shows users their buying power before placing trades. To relieve the primary database, an engineer proposes serving buying-power reads from read replicas with a Redis cache in front. Why should this proposal be rejected for this particular read?",
+      "answer": "Buying power gates real financial actions, so it needs strongly consistent reads from the primary — a stale cached or replica value could let a user place trades they can't cover. Read-scaling patterns all trade freshness for throughput, which disqualifies them for correctness-critical reads; save them for the app's tolerant reads instead."
+    },
+    {
+      "id": "scaling-reads-30",
+      "type": "scenario",
+      "concept": "Don't deploy read-scaling machinery at trivial scale",
+      "question": "A pre-launch B2B compliance tool with 50 pilot users gets an architecture proposal: Redis cluster, three read replicas, a CDN, and sharding 'so we're ready to scale.' The current database serves under 5 QPS. What should the team do, and why?",
+      "answer": "Reject it and run a single well-indexed database. At 5 QPS none of that machinery is load-bearing — it adds cache-invalidation bugs, replication lag, and ops burden with zero benefit, and each layer can be added later when measurements demand it."
+    },
+    {
+      "id": "scaling-reads-31",
+      "type": "true_false",
+      "concept": "Interview heuristic: justify read-scaling layers with workload numbers",
+      "question": "In a system design interview, proposing a cache in front of every read path by default is a safe way to show you know about scaling reads.",
+      "answer": "False — reflexively adding caches signals pattern-matching, not judgment. Strong candidates first establish the workload numbers (read:write ratio, QPS, latency needs), start with in-database optimization, and justify each added layer while acknowledging its costs like invalidation and staleness."
+    }
+  ]
+}

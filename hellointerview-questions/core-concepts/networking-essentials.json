@@ -1,0 +1,346 @@
+{
+  "section": "core-concepts",
+  "subsection": "Networking Essentials",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/networking-essentials",
+  "concepts": [
+    "Hidden lower-layer latency: per-request connection setup and connection reuse",
+    "Layer responsibilities: IP is best-effort; reliability comes from the transport layer",
+    "UDP for latency-sensitive, loss-tolerant traffic (TCP retransmission stalls real-time data)",
+    "TCP's delivery and ordering guarantees for correctness-critical messages",
+    "TCP flow control and congestion control: the transport layer already paces senders",
+    "Browsers cannot use raw UDP; WebRTC is the only path",
+    "QUIC/HTTP3 cuts connection-establishment round trips",
+    "HTTP statelessness: server-local session state breaks behind a load balancer",
+    "GET must be safe and side-effect free",
+    "HTTP method idempotency: PUT can be retried safely; POST cannot",
+    "Meaningful status code classes vs 200-with-error-body",
+    "HTTPS encrypts transit but does not make client-supplied data trustworthy",
+    "REST models resources with HTTP verbs, not RPC-style operation endpoints",
+    "GraphQL solves over-fetching and under-fetching",
+    "When GraphQL is not justified: fixed requirements, few clients",
+    "gRPC for high-throughput internal service-to-service communication",
+    "gRPC is a poor fit for public, browser-facing APIs",
+    "SSE vs WebSockets: one-directional server push needs only SSE",
+    "SSE pitfall: intermediary buffering defeats streaming",
+    "SSE reconnection: auto-reconnect with Last-Event-ID replay",
+    "Long polling: near-real-time updates over plain HTTP by holding the request open",
+    "WebSockets only for high-frequency bidirectional needs; stateful connections are costly",
+    "WebSockets require end-to-end intermediary support",
+    "WebRTC NAT traversal: STUN hole punching, TURN relay fallback",
+    "WebRTC still requires server components (signaling plus STUN/TURN)",
+    "Prefer vertical scaling for simplicity; horizontal scaling is what forces load balancing",
+    "Client-side load balancing via service registry removes the extra hop internally",
+    "DNS TTL caching constrains how fast endpoint changes propagate",
+    "DNS rotation across multiple load balancers for fault tolerance",
+    "L4 load balancing for WebSockets: TCP passthrough keeps connections pinned",
+    "L7 load balancing: content-based routing on URL, headers, cookies",
+    "Health check depth: HTTP checks catch hung servers that still accept TCP",
+    "Least-connections algorithm for long-lived connections",
+    "Session affinity (sticky sessions): IP-hash or cookie routing pins a client to one server, with failure caveats",
+    "CDNs: edge caching of static content for global users",
+    "Regional partitioning: colocate compute and data for geographically local interactions",
+    "Speed-of-light propagation sets an irreducible latency floor",
+    "Always set explicit timeouts on network calls",
+    "Exponential backoff with jitter prevents retry thundering herds",
+    "Idempotency keys make retries of non-idempotent operations safe",
+    "Circuit breakers fail fast and prevent cascading failures",
+    "Interview default: HTTPS/REST over TCP, justify deviations"
+  ],
+  "question_count": 42,
+  "questions": [
+    {
+      "id": "networking-essentials-01",
+      "type": "scenario",
+      "concept": "Hidden lower-layer latency: per-request connection setup and connection reuse",
+      "question": "A SaaS dashboard's backend logs show 25ms of processing per API call, yet real-user monitoring reports 250ms+. The web client opens a brand-new HTTPS connection for every single API call, and each screen makes a dozen calls. Where is the missing time going, and what should the team change?",
+      "answer": "Every fresh connection pays DNS resolution, the TCP handshake, and TLS negotiation — multiple round trips before the first byte of the actual request. Reuse connections via keep-alive / HTTP/2 multiplexing so the setup cost is paid once and amortized across calls."
+    },
+    {
+      "id": "networking-essentials-02",
+      "type": "true_false",
+      "concept": "Layer responsibilities: IP is best-effort; reliability comes from the transport layer",
+      "question": "As long as the network hardware is healthy, IP (layer 3) guarantees that packets arrive at the destination in the order they were sent.",
+      "answer": "False — IP is best-effort: it routes individual packets with no delivery, ordering, or duplication guarantees. Reliability and ordering are added by TCP at the transport layer (layer 4)."
+    },
+    {
+      "id": "networking-essentials-03",
+      "type": "scenario",
+      "concept": "UDP for latency-sensitive, loss-tolerant traffic (TCP retransmission stalls real-time data)",
+      "question": "A fast-paced multiplayer shooter streams player positions over TCP. On lossy Wi-Fi, players see the game freeze for a moment, then everyone 'teleports' as a burst of updates arrives at once. What is going wrong, and what should the team change?",
+      "answer": "TCP retransmits lost packets and refuses to deliver newer data until older data arrives, so the client stalls waiting for position updates that are already obsolete. Switch to UDP: a lost position packet should simply be dropped because the next packet supersedes it — low latency matters more than reliable delivery here."
+    },
+    {
+      "id": "networking-essentials-04",
+      "type": "scenario",
+      "concept": "TCP's delivery and ordering guarantees for correctness-critical messages",
+      "question": "A brokerage's back-office pipeline passes trade confirmations between internal services, and losing even one confirmation is unacceptable. An engineer proposes moving the pipeline to UDP 'because it's faster.' Which transport fits, and why?",
+      "answer": "TCP. Its acknowledgment, retransmission, and ordering guarantees ensure every confirmation arrives intact and in sequence; UDP offers no delivery guarantee, so a dropped datagram silently loses a trade record. The small latency win is irrelevant when every message must arrive."
+    },
+    {
+      "id": "networking-essentials-05",
+      "type": "scenario",
+      "concept": "TCP flow control and congestion control: the transport layer already paces senders",
+      "question": "An IoT platform uploads large sensor archives from powerful gateways to ingestion servers over TCP. A new engineer warns that the fast gateways will overwhelm slower servers' buffers and congested network links, and proposes designing an application-level throttling protocol before launch. What does TCP already provide here?",
+      "answer": "TCP flow control has the receiver advertise how much buffer space it has left, so a sender can never overrun a slow receiver, and TCP congestion control automatically backs the send rate off when the network shows signs of congestion. Custom pacing is what you build when you choose UDP, which has neither."
+    },
+    {
+      "id": "networking-essentials-06",
+      "type": "true_false",
+      "concept": "Browsers cannot use raw UDP; WebRTC is the only path",
+      "question": "A browser game's JavaScript can open a raw UDP socket to the game server to reduce latency.",
+      "answer": "False — browsers expose no raw UDP sockets. The only UDP-like transport available to web pages is WebRTC (data channels), so any design sending UDP to browser clients needs a WebRTC approach or a TCP-based fallback."
+    },
+    {
+      "id": "networking-essentials-07",
+      "type": "scenario",
+      "concept": "QUIC/HTTP3 cuts connection-establishment round trips",
+      "question": "A news app's users on high-latency cellular links complain the first article load is slow. Traces show most of the time is spent before the request is even sent: a TCP handshake followed by a TLS handshake, each costing full round trips. What protocol change addresses this, and how does it help?",
+      "answer": "Adopt HTTP/3 (QUIC). QUIC runs over UDP and folds transport setup and TLS encryption into a combined handshake with fewer round trips, while still providing TCP-like reliability — directly cutting the connection-establishment latency that dominates on high-RTT links."
+    },
+    {
+      "id": "networking-essentials-08",
+      "type": "scenario",
+      "concept": "HTTP statelessness: server-local session state breaks behind a load balancer",
+      "question": "A customer-support tool keeps 'which ticket this agent currently has open' in the web server's process memory. It worked with one server, but after scaling to three servers behind a round-robin load balancer, agents randomly see the wrong ticket or none at all. What is going wrong?",
+      "answer": "HTTP is stateless and the load balancer sends consecutive requests to different servers, so state stored in one server's memory is invisible to the others. Move per-user state into shared storage (database/cache) that any server can read, rather than relying on which machine handled the last request."
+    },
+    {
+      "id": "networking-essentials-09",
+      "type": "scenario",
+      "concept": "GET must be safe and side-effect free",
+      "question": "An e-commerce site adds a one-click reorder link in emails that hits GET /reorder?orderId=123. Customers start reporting duplicate orders they swear they never clicked; logs show hits from email security scanners and link prefetchers. What is the design mistake?",
+      "answer": "GET is defined as safe and side-effect free, and crawlers, scanners, and prefetchers rely on that by freely following GET URLs. Placing an order changes state, so it must be a POST triggered by an explicit user action — never a side effect of fetching a URL."
+    },
+    {
+      "id": "networking-essentials-10",
+      "type": "true_false",
+      "concept": "HTTP method idempotency: PUT can be retried safely; POST cannot",
+      "question": "A client sends PUT /profiles/42 with a complete replacement profile document, and the request times out with no response. The client can safely resend the exact same request without any idempotency key.",
+      "answer": "True — PUT is idempotent by definition: replaying the same full replacement leaves the resource in the same final state whether or not the first attempt actually landed. A POST creating a resource would need an idempotency key, since each delivery could create another one."
+    },
+    {
+      "id": "networking-essentials-11",
+      "type": "scenario",
+      "concept": "Meaningful status code classes vs 200-with-error-body",
+      "question": "A ticketing platform's API returns HTTP 200 with a body like {\"success\": false, \"reason\": \"sold out\"} for every failure. The ops dashboard shows a 100% success rate during an outage, and a partner's HTTP client caches error responses and never retries. What should change, and why?",
+      "answer": "Return real status codes: 4xx for client-side problems, 5xx for server faults, 2xx only for success. Status code classes are what generic infrastructure — monitors, caches, retry logic, client libraries — keys off; wrapping every failure in a 200 makes errors invisible to all of it."
+    },
+    {
+      "id": "networking-essentials-12",
+      "type": "scenario",
+      "concept": "HTTPS encrypts transit but does not make client-supplied data trustworthy",
+      "question": "A neobank's balance endpoint reads account_id from the request body and returns that account's balance. When a reviewer objects, an engineer replies that it is safe 'because all traffic is HTTPS.' What is wrong with this reasoning?",
+      "answer": "TLS only protects bytes in transit from third-party eavesdropping and tampering — it does nothing about a malicious client, who can put any account_id they want in a perfectly encrypted request. Authorization must be enforced server-side by deriving the account from the authenticated session, never trusted from request content."
+    },
+    {
+      "id": "networking-essentials-13",
+      "type": "scenario",
+      "concept": "REST models resources with HTTP verbs, not RPC-style operation endpoints",
+      "question": "A billing team ships an API with POST /createInvoice, POST /markInvoicePaid, and POST /fetchInvoice. A reviewer calls it 'RPC pretending to be REST.' What is the reviewer's point, and how should the API look?",
+      "answer": "REST models nouns (resources) and lets HTTP verbs express the operation, rather than encoding operations in endpoint names. It should be POST /invoices to create, GET /invoices/{id} to read, and PATCH/PUT /invoices/{id} to change state — which also restores correct verb semantics like idempotent, cacheable reads."
+    },
+    {
+      "id": "networking-essentials-14",
+      "type": "scenario",
+      "concept": "GraphQL solves over-fetching and under-fetching",
+      "question": "A social app's mobile feed screen makes five sequential REST calls and discards roughly 80% of the fields it downloads; users on cellular see slow loads. Multiple client teams keep requesting slightly different response shapes. What API approach targets this problem, and how?",
+      "answer": "GraphQL. The client declares exactly the fields it needs and gets them in a single query, eliminating under-fetching (many round trips to assemble one screen) and over-fetching (downloading fields it throws away) — exactly the situation of many clients wanting different slices of the same data."
+    },
+    {
+      "id": "networking-essentials-15",
+      "type": "scenario",
+      "concept": "When GraphQL is not justified: fixed requirements, few clients",
+      "question": "An internal payroll service has exactly two consumers with stable, well-known data needs that haven't changed in a year. A new hire proposes rewriting its REST API in GraphQL 'for flexibility.' Which approach fits better here, and why?",
+      "answer": "Keep REST. GraphQL's payoff is client-driven flexibility, which is worthless when there are two known clients with fixed requirements — you'd be adding query-execution complexity and potential latency on the server for no benefit. Simple resource endpoints are the right default."
+    },
+    {
+      "id": "networking-essentials-16",
+      "type": "scenario",
+      "concept": "gRPC for high-throughput internal service-to-service communication",
+      "question": "A ride-hailing platform's pricing service calls its geo service millions of times per minute over JSON/REST. Profiling shows significant CPU burned on JSON encoding/decoding and payloads far larger than the data they carry. What should the team switch to, and why?",
+      "answer": "gRPC. Protocol Buffers give compact binary serialization (a fraction of equivalent JSON size) over HTTP/2, yielding roughly an order of magnitude better throughput than JSON/REST — and both ends are internal services the team controls, which is exactly gRPC's sweet spot."
+    },
+    {
+      "id": "networking-essentials-17",
+      "type": "scenario",
+      "concept": "gRPC is a poor fit for public, browser-facing APIs",
+      "question": "A startup launches its public developer API as gRPC-only. Third-party developers complain they cannot call it directly from browsers and that onboarding requires compiling proto definitions and special tooling. What should the startup change?",
+      "answer": "Expose a REST/JSON API for the public surface and keep gRPC for internal service-to-service traffic. gRPC's binary protocol has poor browser support and imposes tooling burden on external consumers, while REST works from any HTTP client with zero setup."
+    },
+    {
+      "id": "networking-essentials-18",
+      "type": "scenario",
+      "concept": "SSE vs WebSockets: one-directional server push needs only SSE",
+      "question": "A charity-auction site needs every bidder's screen to reflect new bids within a second. Bidders submit bids only occasionally, via ordinary POST requests. The team is sizing a WebSocket cluster for this. Which push approach fits better, and why?",
+      "answer": "Server-Sent Events. The real-time flow is strictly server-to-client (bid updates out; bids already arrive via normal POSTs), so SSE delivers the push over plain HTTP with built-in reconnection and none of WebSockets' bidirectional, stateful connection overhead. WebSockets are only warranted for high-frequency two-way traffic."
+    },
+    {
+      "id": "networking-essentials-19",
+      "type": "scenario",
+      "concept": "SSE pitfall: intermediary buffering defeats streaming",
+      "question": "A live-scores feature built on SSE works perfectly on localhost, but in production some users receive no updates for minutes and then a burst of them all at once. What is the likely cause?",
+      "answer": "An intermediary — a reverse proxy, load balancer, or corporate proxy — is buffering the streamed HTTP response and flushing it in chunks instead of forwarding each event immediately. SSE requires response buffering to be disabled along the entire path, and this is a classic SSE deployment gotcha."
+    },
+    {
+      "id": "networking-essentials-20",
+      "type": "scenario",
+      "concept": "SSE reconnection: auto-reconnect with Last-Event-ID replay",
+      "question": "A notification stream uses SSE, and many users are commuters whose connections drop in tunnels. The PM asks whether those users silently lose the notifications sent while they were disconnected. What does SSE offer here, and what must the server do to take advantage of it?",
+      "answer": "The browser's EventSource automatically reconnects and sends the ID of the last event it received (Last-Event-ID). If the server assigns IDs to events and can replay everything after a given ID, reconnecting clients catch up on what they missed — without server-side replay support, those events are simply lost."
+    },
+    {
+      "id": "networking-essentials-21",
+      "type": "scenario",
+      "concept": "Long polling: near-real-time updates over plain HTTP by holding the request open",
+      "question": "A food-delivery app's order-tracking page must show status changes within a couple of seconds. The team rejects half-second polling as wasteful — thousands of clients would hammer the API for mostly-empty responses — but their hosting stack makes SSE and WebSockets awkward to deploy. What technique gives them near-real-time updates using only ordinary HTTP requests?",
+      "answer": "Long polling: the client sends a normal request and the server holds it open until a status change occurs (or a timeout passes), responds, and the client immediately re-requests. Updates arrive almost instantly, the mostly-empty responses disappear, and every intermediary sees nothing but plain HTTP request/response traffic."
+    },
+    {
+      "id": "networking-essentials-22",
+      "type": "scenario",
+      "concept": "WebSockets only for high-frequency bidirectional needs; stateful connections are costly",
+      "question": "An ops dashboard displays fleet metrics that refresh once per minute. An engineer proposes WebSockets 'to make it real-time.' Is this the right call?",
+      "answer": "No — it is overengineering. There is no high-frequency bidirectional traffic, so simple periodic polling (or SSE at most) does the job. WebSockets would force the backend to maintain a fleet of long-lived stateful connections, which is significantly more expensive to operate at scale than stateless HTTP, for zero user-visible benefit at a 60-second refresh rate."
+    },
+    {
+      "id": "networking-essentials-23",
+      "type": "scenario",
+      "concept": "WebSockets require end-to-end intermediary support",
+      "question": "An enterprise chat app's WebSocket connections work flawlessly in development and for consumer users, but connections fail to establish for many corporate customers. What is the likely cause, and what should the team do?",
+      "answer": "Every hop in the path — corporate firewalls, proxies, load balancers — must support the WebSocket upgrade and tolerate long-lived connections, and one non-cooperating intermediary kills the connection. Corporate middleboxes frequently don't. Ship a fallback transport (SSE or long polling) and ensure their own infrastructure is WebSocket-aware end-to-end."
+    },
+    {
+      "id": "networking-essentials-24",
+      "type": "scenario",
+      "concept": "WebRTC NAT traversal: STUN hole punching, TURN relay fallback",
+      "question": "A video-calling startup finds that a meaningful fraction of call attempts between two home users never establish a media connection, even though signaling completes fine. Both users are behind home routers. What is happening, and what infrastructure is needed?",
+      "answer": "Both peers are behind NAT, so neither can reach the other's private address directly. STUN servers let each peer discover its public IP/port and attempt hole punching; when NATs are too restrictive for that to work, a TURN relay server must carry the media between them. A production WebRTC service needs both — and must budget for TURN relay bandwidth."
+    },
+    {
+      "id": "networking-essentials-25",
+      "type": "true_false",
+      "concept": "WebRTC still requires server components (signaling plus STUN/TURN)",
+      "question": "Because WebRTC connects peers directly, a video-calling product can ship with no server-side components at all.",
+      "answer": "False — peers cannot find each other on their own. WebRTC requires a signaling server to exchange connection metadata before the peer link exists, plus STUN servers for public-address discovery and TURN relays for when direct connection fails."
+    },
+    {
+      "id": "networking-essentials-26",
+      "type": "scenario",
+      "concept": "Prefer vertical scaling for simplicity; horizontal scaling is what forces load balancing",
+      "question": "A B2B analytics API runs comfortably on one server that is starting to hit CPU limits at peak. One engineer wants to move to eight small instances behind a new load balancer; another wants to simply upgrade to a much larger instance. Traffic is predictable and modest. What is the reasonable default, and what does the eight-instance plan drag in?",
+      "answer": "Scale vertically first: a bigger machine solves the CPU problem with zero architectural change. Going horizontal is what forces you to add a load balancer, health checks, and the discipline that no request depends on one server's local state — complexity worth paying only when a single machine genuinely can't keep up or redundancy requirements demand multiple servers."
+    },
+    {
+      "id": "networking-essentials-27",
+      "type": "scenario",
+      "concept": "Client-side load balancing via service registry removes the extra hop internally",
+      "question": "A logistics company's internal microservices all call each other through a central dedicated load balancer, adding a network hop to every internal RPC, and tight latency budgets are being blown. All clients are the company's own services. What alternative should they consider, and why is it viable here?",
+      "answer": "Client-side load balancing: each service pulls the healthy-instance list from a service registry and picks a backend directly, eliminating the intermediary hop entirely (gRPC supports this natively). It is viable precisely because the clients are few, internal, and controlled — the situations where pushing server lists to clients works well."
+    },
+    {
+      "id": "networking-essentials-28",
+      "type": "scenario",
+      "concept": "DNS TTL caching constrains how fast endpoint changes propagate",
+      "question": "During a migration, an e-commerce team repoints their domain's DNS records at new servers and immediately shuts down the old ones. For hours afterward, a chunk of users get connection errors. What did they miss?",
+      "answer": "DNS responses are cached by resolvers and clients for the record's TTL, so many users kept resolving to the dead IPs until their caches expired. Lower the TTL well before the cutover and keep the old servers running until the old records have aged out everywhere."
+    },
+    {
+      "id": "networking-essentials-29",
+      "type": "scenario",
+      "concept": "DNS rotation across multiple load balancers for fault tolerance",
+      "question": "A SaaS company fronts everything with a single load balancer in one data center, and an audit flags it as a single point of failure. The team asks how anyone runs load balancers without the load balancer itself being the weak link. What is the standard answer?",
+      "answer": "Deploy load balancers in multiple data centers or regions and publish all of them in DNS, rotating the returned addresses. Different clients naturally spread across the LBs, and if one dies, clients fail over to the remaining addresses — DNS is the layer that balances the balancers."
+    },
+    {
+      "id": "networking-essentials-30",
+      "type": "scenario",
+      "concept": "L4 load balancing for WebSockets: TCP passthrough keeps connections pinned",
+      "question": "A trivia-game platform is adding a WebSocket tier for live matches and must choose between a layer 4 and a layer 7 load balancer in front of it. Which fits better, and why?",
+      "answer": "Layer 4. An L4 balancer routes on IP/port and effectively passes the TCP connection straight through, so the persistent WebSocket stays glued to one backend for its lifetime — the behavior WebSockets need. An L7 balancer would terminate the connection and proxy every frame just to inspect HTTP content that a long-lived upgraded connection no longer benefits from."
+    },
+    {
+      "id": "networking-essentials-31",
+      "type": "scenario",
+      "concept": "L7 load balancing: content-based routing on URL, headers, cookies",
+      "question": "An e-commerce site wants requests to /api/* routed to its API server pool, all other paths to the web-rendering pool, and any user carrying a beta cookie sent to a canary pool. Their current balancer routes purely on IP and port and cannot do any of this. What do they need, and what makes it capable of this?",
+      "answer": "A layer 7 load balancer. It terminates the client connection and parses the HTTP request, so it can route on URL path, headers, and cookies — none of which an L4 balancer can see, since L4 only looks at network-level information. The cost is extra CPU for request inspection, which is the standard trade for content-aware routing."
+    },
+    {
+      "id": "networking-essentials-32",
+      "type": "scenario",
+      "concept": "Health check depth: HTTP checks catch hung servers that still accept TCP",
+      "question": "One app server in a food-delivery backend deadlocks: the process still accepts TCP connections but never processes requests. The load balancer's health checks keep passing, so it keeps sending users there and they all get timeouts. What is wrong with the health check, and what is the fix?",
+      "answer": "The balancer is using a TCP health check, which only verifies that a connection can be opened — a hung process still passes. Switch to an HTTP (L7) health check that requires a 200 from a real endpoint, so servers that accept connections but can't actually serve get pulled from rotation."
+    },
+    {
+      "id": "networking-essentials-33",
+      "type": "scenario",
+      "concept": "Least-connections algorithm for long-lived connections",
+      "question": "A live-sports streaming service holds long-lived SSE connections. Under load it scales from four servers to six, but hours later the original four are still pegged while the two new ones sit nearly idle under round-robin balancing. Why, and what should change?",
+      "answer": "Existing long-lived connections never move, and round robin only splits new connections evenly — so the old servers keep their full backlog while new capacity fills at a crawl. Use least-connections, which routes each new stream to the server with the fewest active connections, evening out load quickly. Round robin is fine for short stateless requests, not persistent connections."
+    },
+    {
+      "id": "networking-essentials-34",
+      "type": "scenario",
+      "concept": "Session affinity (sticky sessions): IP-hash or cookie routing pins a client to one server, with failure caveats",
+      "question": "A legacy quiz platform keeps each user's in-progress quiz state in the web server's memory and cannot be refactored before a big launch. The team asks whether the load balancer can at least keep each user landing on the same server for the duration of a quiz. What LB feature does this, and what are its sharp edges?",
+      "answer": "Session affinity: the balancer routes by a hash of the client IP or by a stickiness cookie, so all of a user's requests hit the same backend. It works, but a server crash or scale-in still wipes those users' state, and IP hashing dumps everyone behind a shared corporate NAT onto one server — it is a stopgap, with shared session storage as the real fix."
+    },
+    {
+      "id": "networking-essentials-35",
+      "type": "scenario",
+      "concept": "CDNs: edge caching of static content for global users",
+      "question": "A podcast app serves episode artwork — images that never change after upload — from a single origin in Virginia. Listeners in Australia wait noticeably long for artwork to load. What is the standard fix, and why does it work?",
+      "answer": "Put a CDN in front of the artwork. Immutable static assets are ideal cache material, so CDN edge servers near users serve them locally, replacing a trans-Pacific round trip with a nearby fetch. The origin only gets hit on cache misses."
+    },
+    {
+      "id": "networking-essentials-36",
+      "type": "scenario",
+      "concept": "Regional partitioning: colocate compute and data for geographically local interactions",
+      "question": "A taxi-matching app runs all compute and its database in a single US region. Riders and drivers in Jakarta see roughly 250ms on every location update and matches feel sluggish — even though a Jakarta rider is only ever matched with a Jakarta driver. What architectural change fits this workload?",
+      "answer": "Partition regionally: run the matching compute and its data in a region near each city, since interactions are inherently local — a Jakarta rider never needs Miami's data. Requests are then served entirely by nearby services and a nearby database, eliminating cross-ocean round trips, and each region handles a far smaller user population."
+    },
+    {
+      "id": "networking-essentials-37",
+      "type": "scenario",
+      "concept": "Speed-of-light propagation sets an irreducible latency floor",
+      "question": "A product manager asks the team to get London-to-New-York API round trips under 10ms 'by optimizing the code.' Why is this request impossible as stated, and what is the only real fix?",
+      "answer": "Light in fiber travels at roughly 200,000 km/s, so the ~5,600 km one-way distance costs on the order of 28ms before a single instruction runs — round trips are physically several times over the 10ms budget. No code change beats physics; the only fix is moving the endpoints closer together, i.e., serving those users from a nearby region."
+    },
+    {
+      "id": "networking-essentials-38",
+      "type": "scenario",
+      "concept": "Always set explicit timeouts on network calls",
+      "question": "A B2B reporting SaaS calls a third-party PDF-rendering API with no timeout configured. When the vendor's API hangs one afternoon, the SaaS's worker threads block indefinitely, the job queue backs up, and unrelated reports stall for everyone. What is the root mistake?",
+      "answer": "Network calls without timeouts turn a slow dependency into an unbounded resource leak: each hung call holds a worker forever. Every outbound call needs an explicit timeout so failures surface quickly, threads are released, and the caller can retry or degrade instead of silently seizing up."
+    },
+    {
+      "id": "networking-essentials-39",
+      "type": "scenario",
+      "concept": "Exponential backoff with jitter prevents retry thundering herds",
+      "question": "After a two-minute outage, a fleet of 200,000 smart thermostats all retry their check-in at the same fixed 10-second interval. The backend comes up, absorbs one synchronized wave of 200k requests, and collapses again — repeatedly. What retry policy fixes this, and what does each piece contribute?",
+      "answer": "Exponential backoff with jitter. Backoff spaces retries progressively further apart (1s, 2s, 4s, 8s...) so pressure on the recovering service decays; jitter randomizes each device's retry moment so the fleet's requests spread into a smooth trickle instead of arriving as synchronized waves — the thundering herd that keeps re-killing the service."
+    },
+    {
+      "id": "networking-essentials-40",
+      "type": "scenario",
+      "concept": "Idempotency keys make retries of non-idempotent operations safe",
+      "question": "A payments API's mobile clients retry the charge request when it times out — sometimes the original request actually succeeded and the customer gets billed twice. Retries can't be removed because networks are unreliable. What mechanism fixes this?",
+      "answer": "Idempotency keys. The client attaches a unique key per payment attempt; the server records processed keys and, on a retry with a known key, returns the original result instead of charging again. This makes an inherently non-idempotent operation safe to retry, which is a prerequisite for any retry-on-timeout policy."
+    },
+    {
+      "id": "networking-essentials-41",
+      "type": "scenario",
+      "concept": "Circuit breakers fail fast and prevent cascading failures",
+      "question": "A checkout service calls a recommendations service on every request. When recommendations goes down, every checkout waits out a 30-second timeout, checkout's thread pool exhausts, and soon the entire site is returning errors — a minor feature took down the business-critical path. What pattern prevents this, and how does it operate?",
+      "answer": "A circuit breaker. After a threshold of failures it opens and rejects calls to recommendations instantly — checkout fails fast, skips the widget, and stays healthy — while periodically letting a half-open probe through to test recovery before closing again. This contains the dependency failure instead of letting it cascade through exhausted resources."
+    },
+    {
+      "id": "networking-essentials-42",
+      "type": "true_false",
+      "concept": "Interview default: HTTPS/REST over TCP, justify deviations",
+      "question": "In a system design interview, the safest baseline is HTTPS with a REST API over TCP, and choices like UDP, WebSockets, gRPC, or GraphQL should each be explicitly justified by a specific requirement.",
+      "answer": "True — TCP + HTTP(S) + REST is the expected default that needs no defense, while each deviation trades something away (reliability, statelessness, browser support, simplicity) and should be introduced only when a concrete requirement, like real-time bidirectional traffic or extreme internal throughput, demands it."
+    }
+  ]
+}

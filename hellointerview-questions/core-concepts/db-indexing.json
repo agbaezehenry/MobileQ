@@ -1,0 +1,286 @@
+{
+  "section": "core-concepts",
+  "subsection": "Database Indexing",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/db-indexing",
+  "concepts": [
+    "Index purpose: avoiding full-table scans",
+    "Heap files and page-based disk access cost",
+    "Random vs sequential access still differs on SSDs",
+    "Index storage overhead",
+    "Write amplification: each write updates every index",
+    "Skip indexing write-heavy, rarely-read tables",
+    "Tiny tables: sequential scan beats an index",
+    "Auditing and dropping unused indexes",
+    "B-tree fan-out sized to disk pages",
+    "B-tree lookup depth stays flat as data grows",
+    "B-trees serve both equality and range queries",
+    "B-tree self-balancing under random inserts/deletes",
+    "B-tree as the safe interview default",
+    "B+ tree variant: data in linked leaves only",
+    "Primary key and unique constraints auto-create indexes",
+    "LSM write path: memtable, WAL, SSTable flush",
+    "LSM read amplification",
+    "Bloom filters skip SSTables on reads",
+    "Compaction merges SSTables and reclaims space",
+    "Choosing LSM vs B-tree by read/write workload",
+    "Hash indexes cannot answer range queries",
+    "Hash index sweet spot: in-memory exact match (Redis)",
+    "Why separate lat/lng B-trees fail proximity queries",
+    "Geohash: 2D-to-1D encoding with prefix locality",
+    "Quadtree: density-adaptive recursive subdivision",
+    "R-tree: bounding rectangles for shapes/polygons",
+    "Inverted index for full-text search",
+    "External search index sync: CDC lag is acceptable",
+    "Composite index beats separate single-column indexes",
+    "Composite index leftmost-prefix rule",
+    "Composite index column order: equality before range",
+    "Covering index enables index-only scans",
+    "Covering index trade-off: wider index, costlier writes",
+    "Interview depth varies by role and interview type"
+  ],
+  "question_count": 34,
+  "questions": [
+    {
+      "id": "db-indexing-01",
+      "type": "scenario",
+      "concept": "Index purpose: avoiding full-table scans",
+      "question": "An e-commerce site's order-history page takes 30 seconds to load. The query filters a 40-million-row orders table by customer email, and the query plan shows the database reading every page of the table from disk. What is going wrong, and what is the fix?",
+      "answer": "The query is doing a full table scan because there is no index on the email column, so the database must read every page to find matches. Adding a B-tree index on customer email gives it a direct path to only the pages holding the matching rows."
+    },
+    {
+      "id": "db-indexing-02",
+      "type": "scenario",
+      "concept": "Heap files and page-based disk access cost",
+      "question": "A junior engineer at a payments processor is puzzled: fetching a single 200-byte transaction by its reference number takes several seconds on an unindexed 100-million-row table. 'The row is tiny — why is this slow?' What explains the cost?",
+      "answer": "Rows sit unordered in heap files on disk, so without an index the database loads page after page into memory until it stumbles on the match. The cost is proportional to the number of disk pages scanned, not the size of the row returned."
+    },
+    {
+      "id": "db-indexing-03",
+      "type": "scenario",
+      "concept": "Random vs sequential access still differs on SSDs",
+      "question": "A logistics company migrates its database servers from spinning disks to NVMe SSDs. An engineer proposes skipping index design on the new tables, reasoning that SSD random reads are effectively free. What is wrong with this reasoning?",
+      "answer": "Random access is still significantly slower than sequential access even on SSDs — the gap is smaller than on HDDs but it has not disappeared. Scans and scattered reads still cost real time at scale, so indexing remains essential."
+    },
+    {
+      "id": "db-indexing-04",
+      "type": "scenario",
+      "concept": "Index storage overhead",
+      "question": "A project-management SaaS adds indexes on nearly every column of its 500 GB tasks table 'in case someone queries it.' Disk consumption roughly doubles and the ops team demands an explanation. What is going on?",
+      "answer": "Each index is a full separate data structure on disk that can consume nearly as much space as the data it indexes, so indexing every column multiplies storage. Only columns that queries actually filter or sort on should be indexed."
+    },
+    {
+      "id": "db-indexing-05",
+      "type": "scenario",
+      "concept": "Write amplification: each write updates every index",
+      "question": "A ticketing platform's checkout inserts into an orders table that has accumulated six secondary indexes over time. Insert latency has crept up with each index added, and disk write volume per order is now several times the row size. What is the mechanism behind the slowdown?",
+      "answer": "Every insert must update not just the table but every index on it, so one logical write fans out into several physical disk writes. Six indexes mean roughly seven structures updated per checkout."
+    },
+    {
+      "id": "db-indexing-06",
+      "type": "scenario",
+      "concept": "Skip indexing write-heavy, rarely-read tables",
+      "question": "An IoT platform writes millions of sensor readings per hour into a raw audit table that analysts query about once a month. An engineer added five indexes to speed up those monthly queries, and ingestion throughput dropped sharply. What should the team change, and why?",
+      "answer": "Drop the indexes: on a write-heavy, rarely-read table, paying index maintenance on every one of millions of inserts to save one monthly query is a terrible trade. Let the monthly analysis run a sequential scan, or build a temporary index just before it."
+    },
+    {
+      "id": "db-indexing-07",
+      "type": "scenario",
+      "concept": "Tiny tables: sequential scan beats an index",
+      "question": "A travel app developer adds an index to a 300-row reference table of airport codes and is annoyed that the query planner keeps ignoring it in favor of scanning the table. Is anything broken?",
+      "answer": "No — for a table that fits in a page or two, a sequential scan is cheaper than traversing an index structure, so the planner is correct to skip it. Indexes only pay off when they save meaningful numbers of page reads."
+    },
+    {
+      "id": "db-indexing-08",
+      "type": "scenario",
+      "concept": "Auditing and dropping unused indexes",
+      "question": "A ten-year-old CRM has fourteen indexes on its contacts table, accreted by different teams. Nobody knows which are used, and the team fears both write overhead and 'memory pressure' from having so many. What is the right course of action?",
+      "answer": "Check the database's index usage statistics and drop every index no query uses — an unused index is pure write and storage cost. The memory fear is mostly overblown because modern buffer pool management handles caching well; the real waste is the maintenance work on every write."
+    },
+    {
+      "id": "db-indexing-09",
+      "type": "scenario",
+      "concept": "B-tree fan-out sized to disk pages",
+      "question": "A gaming studio's players table holds 100 million rows, yet an engineer inspecting the primary-key index finds the tree is only about four levels deep. Why is it so shallow?",
+      "answer": "B-tree nodes are sized to fill a disk page (typically ~8 KB) and therefore hold hundreds of keys each, giving enormous fan-out. With hundreds of children per node, a handful of levels is enough to cover hundreds of millions of rows."
+    },
+    {
+      "id": "db-indexing-10",
+      "type": "scenario",
+      "concept": "B-tree lookup depth stays flat as data grows",
+      "question": "A hotel-booking service grows its reservations table from 10 million to 100 million rows over a year. Lookups by reservation ID barely slow down at all. Why does the lookup cost stay nearly flat despite 10x growth?",
+      "answer": "A B-tree lookup costs only a few page reads — root, maybe an internal node, then a leaf — and depth grows logarithmically with a huge branching factor. A 10x data increase adds at most one level, so lookups stay at roughly 2-4 page reads."
+    },
+    {
+      "id": "db-indexing-11",
+      "type": "scenario",
+      "concept": "B-trees serve both equality and range queries",
+      "question": "A fitness app needs two query patterns: exact lookup of users by email, and listing a user's workouts between two dates. One engineer proposes a hash structure for the exact matches plus a separate specialized structure for the date ranges. What is the simpler standard answer, and why does it work?",
+      "answer": "Use B-tree indexes for both: because a B-tree keeps keys sorted, it answers exact-match lookups and range/ORDER BY queries equally well. One index type covering both patterns is precisely why B-trees are the default everywhere."
+    },
+    {
+      "id": "db-indexing-12",
+      "type": "scenario",
+      "concept": "B-tree self-balancing under random inserts/deletes",
+      "question": "After bulk-importing 50 million tracks in random order into a music-streaming catalog, an engineer schedules a nightly job to rebuild the index, fearing that random inserts have made the tree lopsided and query times unpredictable. Is the job needed?",
+      "answer": "No — B-trees self-balance: node splits and merges during inserts and deletes automatically keep all leaves at the same depth. Performance stays predictable under random write patterns without manual rebuilds."
+    },
+    {
+      "id": "db-indexing-13",
+      "type": "mcq2",
+      "concept": "B-tree as the safe interview default",
+      "question": "In a system design interview you must pick an index type for a standard relational workload — mixed exact lookups, range queries, and sorting, with no extreme write rate — and you have no other information. Which is the safer default?",
+      "options": [
+        "A B-tree index",
+        "An LSM-tree-based store"
+      ],
+      "answer": "A B-tree index — it handles equality, ranges, and ordering with predictable performance, which is why it is the default in virtually every relational database and the safe bet when in doubt."
+    },
+    {
+      "id": "db-indexing-14",
+      "type": "scenario",
+      "concept": "B+ tree variant: data in linked leaves only",
+      "question": "A storage-engine reading group at a fintech startup notices that MongoDB's docs, like most database documentation, describe the index as a B+ tree rather than a plain B-tree. A member asks what practical difference the plus sign makes. What is it?",
+      "answer": "In a B+ tree, actual data lives only in the leaf nodes — internal nodes hold just routing keys, so each page fits far more keys and the tree stays shallower — and the leaves are chained together in sorted order. That linked leaf chain lets a range query walk sequentially from the first match instead of re-traversing the tree."
+    },
+    {
+      "id": "db-indexing-15",
+      "type": "scenario",
+      "concept": "Primary key and unique constraints auto-create indexes",
+      "question": "A job-board engineer, chasing performance, runs CREATE INDEX on the users table's primary-key id column and again on its UNIQUE email column. Queries get no faster, but writes get measurably slower. Why?",
+      "answer": "Primary-key and unique constraints already create B-tree indexes automatically, so the new indexes are exact duplicates of ones that exist. They add write and storage overhead while providing zero new lookup capability."
+    },
+    {
+      "id": "db-indexing-16",
+      "type": "scenario",
+      "concept": "LSM write path: memtable, WAL, SSTable flush",
+      "question": "An observability startup ingests millions of metric points per second into Cassandra, and a new hire asks how any disk-backed store can absorb that write rate. What is the storage-engine answer?",
+      "answer": "Cassandra uses an LSM tree: writes land in an in-memory memtable (with a write-ahead log for durability) and are periodically flushed to disk as immutable, sorted SSTables. That converts random writes into fast sequential disk writes, which is what sustains the ingest rate."
+    },
+    {
+      "id": "db-indexing-17",
+      "type": "scenario",
+      "concept": "LSM read amplification",
+      "question": "A chat service stores messages in an LSM-based database. Writes are blazing fast, but reads of older conversations are slower than expected, and latency worsens as data files accumulate on disk. What is the inherent cause?",
+      "answer": "Read amplification: a key may live in the memtable or in any of many SSTables, so a read must consult multiple structures newest-to-oldest before finding the value. Slower reads are the built-in price LSM trees pay for their write speed."
+    },
+    {
+      "id": "db-indexing-18",
+      "type": "scenario",
+      "concept": "Bloom filters skip SSTables on reads",
+      "question": "A social-feed team running RocksDB notices that most point lookups touch only one data file on disk even though dozens of SSTables exist. A teammate asks what stops the engine from reading every SSTable on each lookup. What is the mechanism?",
+      "answer": "Bloom filters: each SSTable carries one, and a negative answer guarantees the key is not in that file, letting the engine skip it without any disk read. Only the files whose filter says 'maybe present' are actually read."
+    },
+    {
+      "id": "db-indexing-19",
+      "type": "scenario",
+      "concept": "Compaction merges SSTables and reclaims space",
+      "question": "A feature-flag service stores flag values in LevelDB, overwriting the same keys thousands of times a day. Disk usage keeps growing even though the number of distinct flags is constant, and reads slowly degrade. What background process addresses both symptoms, and how?",
+      "answer": "Compaction: it merges SSTables in the background, keeping only the newest version of each key and discarding overwritten and deleted entries. That reclaims the disk space and cuts the number of files a read must check."
+    },
+    {
+      "id": "db-indexing-20",
+      "type": "scenario",
+      "concept": "Choosing LSM vs B-tree by read/write workload",
+      "question": "A video-streaming company is picking storage engines for two services: one ingests a firehose of playback events (huge write volume, occasional analytics reads); the other serves the title catalog (rare writes, constant reads). Which index structure fits each service, and why?",
+      "answer": "LSM tree for the event firehose — sequential memtable flushes are built for sustained write throughput. B-tree for the catalog — read-heavy point and range lookups are its strength, and the low write rate makes its per-write cost irrelevant."
+    },
+    {
+      "id": "db-indexing-21",
+      "type": "scenario",
+      "concept": "Hash indexes cannot answer range queries",
+      "question": "A stock-trading app added a hash index on the executed_at timestamp of its trades table to speed up time-based queries. Exact-timestamp lookups fly, but the everyday query — all trades in the last hour — still scans the whole table. Why doesn't the index help?",
+      "answer": "Hashing destroys ordering, so a hash index can only answer exact-match lookups — it has no concept of 'greater than' or 'between.' The last-hour query needs a B-tree on the timestamp, which keeps keys sorted for range scans."
+    },
+    {
+      "id": "db-indexing-22",
+      "type": "scenario",
+      "concept": "Hash index sweet spot: in-memory exact match (Redis)",
+      "question": "An e-learning platform validates session tokens on every request: pure exact lookup by token, dataset fits comfortably in memory, sub-millisecond target, and range queries will never be needed. What lookup structure fits best, and where is this pattern seen in practice?",
+      "answer": "An in-memory hash index — O(1) average exact-match lookups, which is exactly how Redis works under the hood. On-disk databases rarely bother with hash indexes because B-trees are nearly as fast and far more flexible, but in-memory exact-match-only lookups are the hash sweet spot."
+    },
+    {
+      "id": "db-indexing-23",
+      "type": "scenario",
+      "concept": "Why separate lat/lng B-trees fail proximity queries",
+      "question": "A food-delivery app's 'restaurants within 2 miles' query is slow despite B-tree indexes on both the latitude and longitude columns. The query plan shows one index selecting an enormous set of rows before filtering. Why do the two indexes fail here?",
+      "answer": "Each B-tree narrows only one dimension: a latitude range matches a thin band wrapping the entire globe, so millions of irrelevant rows survive before the longitude filter. Two-dimensional proximity needs a purpose-built geospatial index, not two independent one-dimensional ones."
+    },
+    {
+      "id": "db-indexing-24",
+      "type": "scenario",
+      "concept": "Geohash: 2D-to-1D encoding with prefix locality",
+      "question": "A dating app wants a 'people near you' feature but the team must stay on plain Postgres with ordinary B-tree indexes — no new infrastructure. An engineer suggests storing a geohash string per user. How does that make proximity search work on a regular B-tree?",
+      "answer": "Geohash interleaves latitude and longitude bits into one string, so nearby points mostly share string prefixes — turning a 2D proximity search into a 1D prefix-range scan a standard B-tree can serve. The caveat is cell boundaries: two close points can straddle a boundary and share no prefix, so neighboring cells must be searched too."
+    },
+    {
+      "id": "db-indexing-25",
+      "type": "scenario",
+      "concept": "Quadtree: density-adaptive recursive subdivision",
+      "question": "A navigation app indexes points of interest worldwide: Manhattan has thousands per square mile while the open ocean has nearly none. The team wants a spatial structure whose resolution adapts to that skew. Which approach fits, and how does it adapt?",
+      "answer": "A quadtree: it recursively splits space into four quadrants and subdivides a quadrant only when it exceeds its point capacity. Dense areas like Manhattan end up finely subdivided while empty ocean stays coarse — the resolution follows the data."
+    },
+    {
+      "id": "db-indexing-26",
+      "type": "scenario",
+      "concept": "R-tree: bounding rectangles for shapes/polygons",
+      "question": "A real-estate platform must index property parcels — polygons, not points — and answer 'which parcels intersect the rectangle the user drew on the map.' Point-encoding schemes don't capture parcel shapes. Which index structure is built for this, and what well-known system uses it?",
+      "answer": "An R-tree: it organizes geometries into a hierarchy of minimum bounding rectangles (which may overlap) and prunes entire subtrees whose rectangles miss the query window. This is the structure behind PostGIS-style spatial indexes."
+    },
+    {
+      "id": "db-indexing-27",
+      "type": "scenario",
+      "concept": "Inverted index for full-text search",
+      "question": "A blogging platform's search runs WHERE body LIKE '%kubernetes%' and full-scans the posts table; adding a B-tree on the body column changed nothing. What index concept is missing, and what does it look like?",
+      "answer": "A B-tree on text only accelerates prefix matches, so a contains-a-word query can't use it. Full-text search needs an inverted index mapping each term to the list of documents containing it — the structure behind Elasticsearch/Lucene and Postgres full-text search."
+    },
+    {
+      "id": "db-indexing-28",
+      "type": "scenario",
+      "concept": "External search index sync: CDC lag is acceptable",
+      "question": "A marketplace keeps listings in Postgres as the source of truth and mirrors them into Elasticsearch for full-text search, syncing through change data capture. A PM files a bug: a seller renames a listing and the old title still appears in search results for a second or two. Must the team fix this?",
+      "answer": "No — an external search index fed by change data capture is eventually consistent by design, so it always lags the primary database slightly, and for search use cases that staleness is almost always acceptable. Flows that need read-your-writes (like the seller's own edit page) should read from the primary, not the search index."
+    },
+    {
+      "id": "db-indexing-29",
+      "type": "scenario",
+      "concept": "Composite index beats separate single-column indexes",
+      "question": "An events platform constantly runs a query for events in a given city on a given date. The table has one single-column index on city and another on event_date, yet the query is still slow: each index alone matches hundreds of thousands of rows. What indexing change fixes this, and why?",
+      "answer": "Create one composite index on (city, event_date): its entries are sorted by both columns together, so the query seeks directly to the narrow slice matching that exact city-and-date combination. Two separate indexes each narrow only one dimension, leaving the database to intersect or filter huge intermediate row sets."
+    },
+    {
+      "id": "db-indexing-30",
+      "type": "scenario",
+      "concept": "Composite index leftmost-prefix rule",
+      "question": "A ride-hailing dispatch service has a composite index on (city, driver_status). A query filtering only on driver_status = 'available' across all cities ignores the index entirely. Why?",
+      "answer": "Composite indexes obey the leftmost-prefix rule: entries are sorted by city first, so rows for one status are scattered across every city and can't be reached with a single seek. It's a phone book sorted by last name — useless for finding everyone named 'Sarah.'"
+    },
+    {
+      "id": "db-indexing-31",
+      "type": "scenario",
+      "concept": "Composite index column order: equality before range",
+      "question": "A helpdesk SaaS constantly runs WHERE tenant_id = ? AND created_at > ? against its tickets table. The composite index (created_at, tenant_id) underperforms badly. How should the index be ordered, and why?",
+      "answer": "(tenant_id, created_at): put the equality column first and the range column last, so each tenant's rows sit contiguously sorted by time and the query becomes one narrow range scan. With the range column first, the tenant's matching entries are scattered across the entire date range."
+    },
+    {
+      "id": "db-indexing-32",
+      "type": "scenario",
+      "concept": "Covering index enables index-only scans",
+      "question": "A subscription-billing dashboard runs SELECT plan, renewed_at FROM subscriptions WHERE account_id = ? thousands of times a minute. Even with an index on account_id, the profiler shows a table fetch for every matching row. What change eliminates those fetches?",
+      "answer": "Use a covering index that also stores plan and renewed_at (as extra key columns or via an INCLUDE clause). The query is then answered entirely from the index — an index-only scan — without ever touching the table."
+    },
+    {
+      "id": "db-indexing-33",
+      "type": "true_false",
+      "concept": "Covering index trade-off: wider index, costlier writes",
+      "question": "Since covering indexes let queries skip the table entirely, stuffing every column a query might ever touch into wide covering indexes is a free performance win.",
+      "answer": "False — every extra column makes the index larger on disk and more expensive to maintain on every write, so covering indexes should be reserved for hot, well-defined queries where the read savings clearly outweigh the cost."
+    },
+    {
+      "id": "db-indexing-34",
+      "type": "true_false",
+      "concept": "Interview depth varies by role and interview type",
+      "question": "Deep index internals — LSM compaction, disk page layouts, B-tree node structure — carry equal weight in every system design interview regardless of the role.",
+      "answer": "False — infrastructure-focused interviews probe index internals deeply, while product and full-stack interviews typically expect only a working sense of when and why to add indexes; staff-level candidates are held to mastery of the trade-offs that mid-level candidates are not."
+    }
+  ]
+}

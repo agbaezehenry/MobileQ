@@ -1,0 +1,306 @@
+{
+  "section": "key-technologies",
+  "subsection": "Cassandra",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/cassandra",
+  "concepts": [
+    "Wide-column data model allows sparse, variable columns per row",
+    "Cassandra combines Dynamo's masterless distribution with Bigtable's wide-column storage",
+    "Keyspaces are the top-level container where replication strategy and factor are configured",
+    "Per-column write timestamps drive last-write-wins conflict resolution",
+    "Queries must include the partition key or they scatter across the whole cluster",
+    "Clustering keys pre-sort rows inside a partition to match read order",
+    "Consistent hashing minimizes data movement compared to mod-N hashing",
+    "Virtual nodes (vnodes) smooth load and exploit heterogeneous hardware",
+    "Replica selection walks the ring but skips vnodes on an already-chosen physical node",
+    "NetworkTopologyStrategy spreads replicas across racks/datacenters; SimpleStrategy does not",
+    "Tunable consistency levels trade availability against consistency (ONE through ALL)",
+    "QUORUM writes plus QUORUM reads guarantee an overlapping replica (R+W > N)",
+    "No multi-row transactions — atomicity and isolation exist only at the single-row level",
+    "Any node can act as query coordinator; there is no master to locate",
+    "Gossip protocol spreads membership, liveness, and schema peer-to-peer with no central registry",
+    "Generation and version numbers act as vector clocks so nodes discard stale gossip",
+    "Seed nodes are guaranteed gossip hotspots that prevent isolated sub-clusters",
+    "Phi Accrual failure detection is per-node, independent, and never permanently convicts a node",
+    "Hinted handoff buffers writes for briefly-down replicas and replays them on recovery; hints expire",
+    "LSM-tree storage favors write throughput over read speed versus B-trees",
+    "The commit log (write-ahead log) makes acknowledged writes durable before memtable flush",
+    "SSTables are immutable — updates are new entries in the memtable flushed as new files, never edits in place",
+    "Read path checks memtable first, then uses bloom filters to skip SSTables, scanning newest to oldest",
+    "Deletes are tombstone writes, so deleting data initially consumes more space",
+    "Compaction merges SSTables to bound read amplification and purge tombstones/obsolete versions",
+    "Query-first data modeling: one denormalized table per access pattern, not normalized entities",
+    "Bucketing adds a bounded dimension to the partition key to cap unbounded partition growth (Discord)",
+    "Chronologically sortable unique IDs (Snowflake) avoid clustering-key collisions that timestamps cause",
+    "Partition granularity should mirror the UI/access granularity (Ticketmaster event+section split)",
+    "Precomputed denormalized summary tables replace expensive read-time aggregations",
+    "Storage Attached Indexes (SAI) serve infrequent secondary access patterns without a new table",
+    "Materialized views auto-maintain denormalized derivative tables, avoiding manual dual writes",
+    "Full-text search requires integrating an external search engine (Elasticsearch/Solr)",
+    "CQL borrows SQL syntax for familiarity but not SQL semantics — no joins or ad-hoc queries",
+    "When to choose Cassandra: extreme write throughput, high availability, known access patterns",
+    "When to avoid Cassandra: ad-hoc queries, joins, aggregations, strong consistency needs",
+    "Low-cardinality or skewed partition keys create hot partitions that overload single nodes"
+  ],
+  "question_count": 37,
+  "questions": [
+    {
+      "id": "cassandra-01",
+      "type": "scenario",
+      "concept": "Wide-column data model allows sparse, variable columns per row",
+      "question": "An IoT platform ingests readings from thousands of device models: some report temperature and humidity, others report vibration, GPS, and battery, with new sensor types added monthly. In Postgres the readings table has become a wall of NULL columns and every new sensor type forces a schema migration. Why does Cassandra's data model fit this workload better?",
+      "answer": "Cassandra is a wide-column store: each row only stores the columns it actually has, so heterogeneous devices can write different column sets into one table with no NULL bloat. New sensor fields are just new columns on new rows — no migration of existing data."
+    },
+    {
+      "id": "cassandra-02",
+      "type": "scenario",
+      "concept": "Cassandra combines Dynamo's masterless distribution with Bigtable's wide-column storage",
+      "question": "An architect studying Cassandra notices its design reads like a fusion of two famous distributed-systems papers: the ring topology, gossip, and tunable consistency echo one, while the wide-column tables, memtables, and SSTables echo the other. Which two systems is Cassandra descended from, and what did it inherit from each?",
+      "answer": "Amazon's Dynamo and Google's Bigtable. From Dynamo it takes the masterless distribution layer — consistent hashing on a ring, replication, gossip, and tunable consistency — and from Bigtable it takes the wide-column data model and the LSM-tree storage engine of memtables and SSTables."
+    },
+    {
+      "id": "cassandra-03",
+      "type": "scenario",
+      "concept": "Keyspaces are the top-level container where replication strategy and factor are configured",
+      "question": "One Cassandra cluster hosts two applications: a payments service whose data must survive a full datacenter outage, and an internal debug-logging service where the team would rather save disk than replicate heavily. A new engineer asks whether replication is a single cluster-wide setting or can differ between the two apps. What is the answer?",
+      "answer": "Replication is configured per keyspace — Cassandra's top-level container above tables, which also owns user-defined types. Put each app's tables in its own keyspace: the payments keyspace can use NetworkTopologyStrategy with replicas in multiple datacenters while the logging keyspace uses a low replication factor."
+    },
+    {
+      "id": "cassandra-04",
+      "type": "scenario",
+      "concept": "Per-column write timestamps drive last-write-wins conflict resolution",
+      "question": "A social app user edits their status message on their phone and, a second later, on their laptop. The two writes land on different replicas of a Cassandra cluster. After the replicas sync, every node deterministically shows the laptop's version, with no application code involved. What mechanism decided the winner?",
+      "answer": "Every column value in Cassandra carries a write timestamp, and conflicts are resolved last-write-wins per column. The laptop's write had the later timestamp, so during convergence all replicas kept it and discarded the phone's value."
+    },
+    {
+      "id": "cassandra-05",
+      "type": "scenario",
+      "concept": "Queries must include the partition key or they scatter across the whole cluster",
+      "question": "A SaaS invoicing dashboard stores invoices in a table with PRIMARY KEY ((customer_id), invoice_id). A new 'all overdue invoices' admin screen runs a query (with ALLOW FILTERING) that filters only on status, and it takes tens of seconds while pegging every node in the cluster. What is going wrong?",
+      "answer": "The query omits the partition key, so the coordinator cannot route it to one replica set — it must fan out and scan every partition on every node. In Cassandra a query pattern that isn't served by a partition key needs its own table keyed for that query."
+    },
+    {
+      "id": "cassandra-06",
+      "type": "scenario",
+      "concept": "Clustering keys pre-sort rows inside a partition to match read order",
+      "question": "A comments service stores comments with PRIMARY KEY ((post_id), comment_id) and no ordering clause. To show the 20 newest comments, the app fetches the entire partition and sorts in application code, which is slow for popular posts. What should the team change, and why?",
+      "answer": "Declare comment_id as a clustering key with CLUSTERING ORDER BY (comment_id DESC). Cassandra then stores rows physically sorted newest-first inside the partition, so the newest 20 comments are a cheap LIMIT 20 read off the top with no app-side sort."
+    },
+    {
+      "id": "cassandra-07",
+      "type": "scenario",
+      "concept": "Consistent hashing minimizes data movement compared to mod-N hashing",
+      "question": "A URL shortener team built their own sharding layer using hash(short_code) % 4 across four database nodes. When they added a fifth node, roughly 80% of keys mapped to a new node and the rebalancing storm caused an outage. How does Cassandra's placement scheme avoid this problem?",
+      "answer": "Cassandra uses consistent hashing: keys and nodes hash onto a ring, and a key belongs to the next node clockwise. Adding a node only takes over the ring range from its immediate neighbor, so only that slice of data moves instead of nearly everything remapping as with mod-N."
+    },
+    {
+      "id": "cassandra-08",
+      "type": "scenario",
+      "concept": "Virtual nodes (vnodes) smooth load and exploit heterogeneous hardware",
+      "question": "An ops team runs a Cassandra cluster mixing older 8-core machines with new 32-core machines. They want the big machines to carry proportionally more data, and they've also noticed that with one ring position per machine, some nodes own much larger ring ranges than others by luck of the hash. What Cassandra feature addresses both issues?",
+      "answer": "Virtual nodes. Each physical machine owns many small vnode positions scattered around the ring, which averages out range-size luck, and beefier machines can simply be assigned more vnodes so they hold proportionally more data."
+    },
+    {
+      "id": "cassandra-09",
+      "type": "true_false",
+      "concept": "Replica selection walks the ring but skips vnodes on an already-chosen physical node",
+      "question": "Because replica placement walks clockwise around a ring of vnodes, two replicas of the same partition can end up on vnodes that belong to the same physical server.",
+      "answer": "False — while walking the ring to pick replicas, Cassandra skips any vnode whose physical machine already holds a replica of that partition, so one machine failure can never take out multiple replicas of the same data."
+    },
+    {
+      "id": "cassandra-10",
+      "type": "scenario",
+      "concept": "NetworkTopologyStrategy spreads replicas across racks/datacenters; SimpleStrategy does not",
+      "question": "A payments company runs Cassandra with SimpleStrategy and replication factor 3. A single rack loses power, and although most of the cluster is fine, some partitions become completely unavailable because all three of their replicas lived in that rack. What should the team change, and why?",
+      "answer": "Switch the keyspace to NetworkTopologyStrategy, the production-recommended strategy. It is rack- and datacenter-aware, placing replicas across failure domains so no single rack or DC outage can hold every copy of a partition; SimpleStrategy just walks the ring with no topology awareness."
+    },
+    {
+      "id": "cassandra-11",
+      "type": "scenario",
+      "concept": "Tunable consistency levels trade availability against consistency (ONE through ALL)",
+      "question": "A gaming leaderboard writes scores to Cassandra with consistency level ALL on a replication factor of 3. During a routine rolling restart, score submissions start failing cluster-wide even though two of three replicas for each partition are healthy. What is going wrong, and what is the trade-off the team must make?",
+      "answer": "ALL requires every replica to acknowledge, so a single down replica fails the write — the team bought maximum consistency at the price of availability. They should lower the consistency level: QUORUM keeps strong read-after-write guarantees when paired with QUORUM reads, or ONE maximizes availability at the cost of consistency."
+    },
+    {
+      "id": "cassandra-12",
+      "type": "scenario",
+      "concept": "QUORUM writes plus QUORUM reads guarantee an overlapping replica (R+W > N)",
+      "question": "A ticketing site on Cassandra (replication factor 3) writes purchases at consistency ONE and reads at ONE. Users report that immediately after buying, refreshing 'My Tickets' sometimes shows nothing, then the ticket appears a few seconds later. What configuration change fixes this, and why does it work?",
+      "answer": "Use QUORUM for both writes and reads. With RF=3, QUORUM is 2 nodes (a majority, n/2+1), so any read quorum must share at least one node with the write quorum (2+2 > 3), guaranteeing the read sees the just-written ticket; with ONE/ONE the read can land on a replica that hasn't applied the write yet."
+    },
+    {
+      "id": "cassandra-13",
+      "type": "scenario",
+      "concept": "No multi-row transactions — atomicity and isolation exist only at the single-row level",
+      "question": "A fintech startup wants to move wallet balances to Cassandra for scale. A transfer must debit one user's row and credit another user's row, and either both changes happen or neither does. Can Cassandra deliver this requirement as stated?",
+      "answer": "No. Cassandra has no ACID multi-row transactions — atomicity and isolation apply only within a single row, so a two-row debit/credit can partially fail and leave money lost or duplicated. Transfers like this belong in a transactional database or must be redesigned around single-row operations."
+    },
+    {
+      "id": "cassandra-14",
+      "type": "scenario",
+      "concept": "Any node can act as query coordinator; there is no master to locate",
+      "question": "A ride-hailing team integrating Cassandra starts building a client-side routing library that computes which node 'owns' each key so requests always hit the right server, worried that hitting the wrong node will fail. Is this library necessary?",
+      "answer": "No. Every Cassandra node can act as coordinator for any query: it knows the full ring topology via gossip and forwards the request to the correct replicas at the requested consistency level. Clients can send any query to any node."
+    },
+    {
+      "id": "cassandra-15",
+      "type": "scenario",
+      "concept": "Gossip protocol spreads membership, liveness, and schema peer-to-peer with no central registry",
+      "question": "An engineer joining a streaming-analytics team audits their Cassandra deployment and is confused to find no ZooKeeper, etcd, or any central coordination service — yet every node somehow knows the full cluster membership, which nodes are alive, and the current schema. How does this information spread?",
+      "answer": "Through the gossip protocol: nodes periodically exchange cluster state peer-to-peer with other nodes, so membership, liveness, and schema metadata propagate through the whole cluster without any central registry."
+    },
+    {
+      "id": "cassandra-16",
+      "type": "true_false",
+      "concept": "Generation and version numbers act as vector clocks so nodes discard stale gossip",
+      "question": "If a Cassandra node that was partitioned away for an hour rejoins and gossips its outdated view of the cluster, other nodes may regress to that stale state.",
+      "answer": "False — gossiped state carries each node's generation number (bootstrap time) and version number (a logical clock), forming a vector clock. Receivers compare these and simply discard information older than what they already have, so stale gossip cannot roll back cluster state."
+    },
+    {
+      "id": "cassandra-17",
+      "type": "scenario",
+      "concept": "Seed nodes are guaranteed gossip hotspots that prevent isolated sub-clusters",
+      "question": "During a config cleanup, an SRE proposes deleting the seed-node list from a Cassandra deployment, arguing that since gossip partners are chosen randomly anyway, designated seeds are redundant. What risk is the SRE missing?",
+      "answer": "Without seeds, purely random gossip can let groups of nodes form isolated sub-clusters that never learn about each other, especially during bootstrap. Seed nodes are deliberately biased gossip targets — guaranteed hotspots everyone contacts — ensuring cluster state converges across all nodes."
+    },
+    {
+      "id": "cassandra-18",
+      "type": "scenario",
+      "concept": "Phi Accrual failure detection is per-node, independent, and never permanently convicts a node",
+      "question": "During a network blip in a chat platform's Cassandra cluster, node A stops routing requests to node X while node B continues sending to X successfully. A junior engineer files a bug titled 'inconsistent failure state across cluster'. Is this a bug?",
+      "answer": "No — it's how Phi Accrual failure detection works. Each node independently judges every other node's availability from its own gossip observations, so two nodes can legitimately disagree about X. A convicted node is only routed around, never marked permanently dead unless an operator removes it."
+    },
+    {
+      "id": "cassandra-19",
+      "type": "scenario",
+      "concept": "Hinted handoff buffers writes for briefly-down replicas and replays them on recovery; hints expire",
+      "question": "In a smart-meter ingestion system, one Cassandra replica goes down for ten minutes during a kernel patch. Writes keep succeeding, and when the node comes back the SRE prepares to run a manual repair — but the node has already caught up on the writes it missed. What mechanism did this, and would it still work after a multi-day outage?",
+      "answer": "Hinted handoff: the coordinator stored the down replica's writes as hints and replayed them automatically when gossip showed the node was back. It would not cover a multi-day outage — hints expire, so extended downtime requires an anti-entropy repair or rebuilding the node."
+    },
+    {
+      "id": "cassandra-20",
+      "type": "scenario",
+      "concept": "LSM-tree storage favors write throughput over read speed versus B-trees",
+      "question": "A vehicle-telemetry platform must absorb roughly a million small appends per second. In load tests, Cassandra sustains far higher write throughput per node than their B-tree-based relational database. What about Cassandra's storage engine explains this?",
+      "answer": "Cassandra uses LSM trees: every write is an append to the commit log plus an in-memory memtable insert — pure sequential I/O with no read-modify-write of on-disk pages. B-trees must find and update pages in place, incurring random I/O per write. The trade-off is that reads may consult multiple structures, so LSM buys write speed at some read cost."
+    },
+    {
+      "id": "cassandra-21",
+      "type": "scenario",
+      "concept": "The commit log (write-ahead log) makes acknowledged writes durable before memtable flush",
+      "question": "An engineer on an ad-clicks pipeline notices that Cassandra acknowledges writes once they're in the memtable, which is RAM. She worries that a node crashing before the memtable is flushed to disk would silently lose acknowledged clicks. Why is she wrong?",
+      "answer": "Before touching the memtable, every write is appended to the commit log on disk — a write-ahead log. After a crash, the node replays the commit log to rebuild the unflushed memtable state, so acknowledged writes survive; log entries are only discarded once the memtable is safely flushed to an SSTable."
+    },
+    {
+      "id": "cassandra-22",
+      "type": "scenario",
+      "concept": "SSTables are immutable — updates are new entries in the memtable flushed as new files, never edits in place",
+      "question": "A new hire debugging a product-catalog service watches Cassandra's data directory while updating the same row repeatedly. Existing data files are never modified; instead, new files keep appearing. He asks where the 'update in place' happens. What should you tell him?",
+      "answer": "Nowhere — SSTables are immutable. Every update is a brand-new entry written to the memtable and later flushed as part of a new SSTable; the row's current state is resolved at read time (and consolidated by compaction) by taking the newest entries across files."
+    },
+    {
+      "id": "cassandra-23",
+      "type": "scenario",
+      "concept": "Read path checks memtable first, then uses bloom filters to skip SSTables, scanning newest to oldest",
+      "question": "A gaming-inventory service has accumulated hundreds of SSTables per Cassandra node, yet point lookups by primary key remain fast. An engineer asks how Cassandra avoids opening every one of those files to find a key. What's the answer?",
+      "answer": "The read checks the memtable first for the freshest data, then consults a per-SSTable bloom filter that says definitively when a file does NOT contain the key, so almost all SSTables are skipped without disk I/O. The few candidate files are read newest-to-oldest, using their sorted order and byte-offset indexes to jump straight to the key."
+    },
+    {
+      "id": "cassandra-24",
+      "type": "scenario",
+      "concept": "Deletes are tombstone writes, so deleting data initially consumes more space",
+      "question": "To cut storage costs, a chat platform bulk-deletes millions of old messages from Cassandra. The next morning, disk usage has gone up, not down. What is going on?",
+      "answer": "Deletes in Cassandra don't remove anything immediately — each delete writes a tombstone marker, which is additional data on top of the still-present old entries. Space is only reclaimed later when compaction merges SSTables and drops the tombstoned rows."
+    },
+    {
+      "id": "cassandra-25",
+      "type": "scenario",
+      "concept": "Compaction merges SSTables to bound read amplification and purge tombstones/obsolete versions",
+      "question": "To save CPU, an ops team on a logistics platform throttles Cassandra compaction to nearly zero. Over the following weeks, disk usage climbs steadily and read latencies degrade even though write volume is unchanged. Why did disabling compaction cause this?",
+      "answer": "Compaction is what merges the ever-growing pile of immutable SSTables into fewer files, discarding superseded row versions and expired tombstones. Without it, reads must consult more and more SSTables per key (rising read amplification) and dead data is never reclaimed, so both latency and disk usage grow."
+    },
+    {
+      "id": "cassandra-26",
+      "type": "scenario",
+      "concept": "Query-first data modeling: one denormalized table per access pattern, not normalized entities",
+      "question": "An e-commerce team lifts their normalized relational schema — customers, orders, order_items in separate tables — straight into Cassandra. Now every product page and order-history screen requires stitching data from multiple tables in application code, and performance is poor. What core modeling mistake did they make?",
+      "answer": "They modeled entities instead of queries. Cassandra data modeling starts from each access pattern and builds a denormalized table that answers it in a single partition read — duplicating data across tables is expected. Normalized schemas assume joins and flexible queries, which Cassandra doesn't provide."
+    },
+    {
+      "id": "cassandra-27",
+      "type": "scenario",
+      "concept": "Bucketing adds a bounded dimension to the partition key to cap unbounded partition growth (Discord)",
+      "question": "A live-streaming platform stores chat with PRIMARY KEY ((stream_channel_id), message_id). A handful of hugely popular channels have accumulated years of messages, their partitions have grown enormous, and reads on those channels are degrading. Ordinary channels are fine. What schema change fixes this, and why?",
+      "answer": "Add a time bucket to the partition key — PRIMARY KEY ((stream_channel_id, bucket), message_id) — where the bucket is a fixed window (e.g., 10 days). This caps every partition's size regardless of channel popularity, and since users overwhelmingly read recent messages, most reads still hit a single (current-bucket) partition. This is exactly how Discord solved the same problem."
+    },
+    {
+      "id": "cassandra-28",
+      "type": "scenario",
+      "concept": "Chronologically sortable unique IDs (Snowflake) avoid clustering-key collisions that timestamps cause",
+      "question": "A group-messaging app clusters messages within each conversation partition by a created_at timestamp column. Occasionally two messages sent in the same millisecond end up with one silently overwriting the other. What should the team use as the clustering key instead, and why?",
+      "answer": "A chronologically sortable unique ID like a Snowflake ID. It embeds time so clustering order still matches send order, but its uniqueness guarantees two same-millisecond messages get distinct keys instead of colliding into one row — a raw timestamp is not a unique identifier."
+    },
+    {
+      "id": "cassandra-29",
+      "type": "scenario",
+      "concept": "Partition granularity should mirror the UI/access granularity (Ticketmaster event+section split)",
+      "question": "A stadium-ticketing product stores seats with PRIMARY KEY ((event_id), seat_id). Big events have 60,000 seats in one partition, and the seat-map UI only ever displays one section at a time anyway. How should the schema change, and what principle does this illustrate?",
+      "answer": "Move to a composite partition key of ((event_id, section_id), seat_id), so each partition holds one section's seats. Partitions shrink to a healthy size and every UI request maps to exactly one partition read. The principle: choose partition granularity to mirror how the application actually accesses the data."
+    },
+    {
+      "id": "cassandra-30",
+      "type": "scenario",
+      "concept": "Precomputed denormalized summary tables replace expensive read-time aggregations",
+      "question": "That same ticketing product's venue-overview page shows, for every section, the number of remaining seats and the cheapest price. Computing this means aggregating over tens of thousands of seat rows on every page load, and Cassandra offers no cheap server-side aggregation. What should the team build?",
+      "answer": "A separate denormalized summary table (e.g., event_sections with num_tickets and price_floor per section) that the application updates whenever seats are sold or repriced. The overview page then becomes a trivial read of a few pre-aggregated rows — in Cassandra you precompute aggregates at write time rather than aggregating at read time."
+    },
+    {
+      "id": "cassandra-31",
+      "type": "scenario",
+      "concept": "Storage Attached Indexes (SAI) serve infrequent secondary access patterns without a new table",
+      "question": "An online pharmacy keys its orders table by customer_id, which serves virtually all traffic. The support team occasionally needs to look up orders by pharmacy_branch, maybe a dozen times a day. Building and dual-writing a whole denormalized orders_by_branch table feels like overkill. What Cassandra feature fits this case?",
+      "answer": "A Storage Attached Index (SAI) — a secondary index on the pharmacy_branch column. It enables querying by a non-partition-key column without maintaining a duplicate table, which is the right trade for rare, low-volume access patterns; hot query paths should still get their own purpose-built tables."
+    },
+    {
+      "id": "cassandra-32",
+      "type": "scenario",
+      "concept": "Materialized views auto-maintain denormalized derivative tables, avoiding manual dual writes",
+      "question": "A social app maintains posts_by_user and posts_by_hashtag as two Cassandra tables, with application code writing every post to both. Occasional bugs and partial failures have left the tables subtly out of sync. What Cassandra feature removes this class of bug, and how?",
+      "answer": "Materialized views. You define the derivative table declaratively and Cassandra itself keeps it updated as the base table changes, eliminating the application-level dual-write where one leg can be forgotten or fail independently."
+    },
+    {
+      "id": "cassandra-33",
+      "type": "scenario",
+      "concept": "Full-text search requires integrating an external search engine (Elasticsearch/Solr)",
+      "question": "A knowledge-base SaaS stores articles in Cassandra and now needs keyword search with relevance ranking across article bodies. An engineer proposes doing it with Cassandra queries alone. Why won't that work, and what is the standard approach?",
+      "answer": "Cassandra has no full-text search — no relevance ranking or ad-hoc text matching, and queries are bound to key-based access paths. The standard approach is to pair it with a dedicated search engine like Elasticsearch or Apache Solr (e.g., via plugins such as the Stratio Lucene index) that indexes the text."
+    },
+    {
+      "id": "cassandra-34",
+      "type": "scenario",
+      "concept": "CQL borrows SQL syntax for familiarity but not SQL semantics — no joins or ad-hoc queries",
+      "question": "A backend developer joins a team using Cassandra and is relieved to see CREATE TABLE, INSERT, and SELECT statements that look just like the SQL she already knows. Assuming full SQL support, she designs a reporting endpoint around a three-table JOIN with a GROUP BY. What is she about to discover?",
+      "answer": "CQL borrows SQL's syntax to feel familiar, but not its semantics: there are no joins, and queries must follow each table's primary-key structure rather than filtering arbitrarily. Her report needs a purpose-built precomputed table (or a different engine), not a JOIN."
+    },
+    {
+      "id": "cassandra-35",
+      "type": "scenario",
+      "concept": "When to choose Cassandra: extreme write throughput, high availability, known access patterns",
+      "question": "An energy company is picking a database for smart-grid ingestion: millions of sensor appends per second, reads limited to a few well-known query patterns, and the system must keep accepting writes through node and network failures — slightly stale reads are acceptable. Between Cassandra and a single-leader relational database, which fits better and why?",
+      "answer": "Cassandra. The workload is exactly its sweet spot: append-heavy writes that its LSM engine absorbs, masterless replication that stays writable through failures, horizontal scaling for volume, and fixed access patterns that suit query-first modeling. A single-leader RDBMS bottlenecks writes on one node and sacrifices availability, buying consistency guarantees this system doesn't need."
+    },
+    {
+      "id": "cassandra-36",
+      "type": "scenario",
+      "concept": "When to avoid Cassandra: ad-hoc queries, joins, aggregations, strong consistency needs",
+      "question": "A BI startup wants to build its analytics product on Cassandra 'for scale'. Analysts will compose arbitrary exploratory queries — filtering on any column, joining customers to events, running GROUP BY aggregations that nobody can predict in advance. What's the fundamental problem with this plan?",
+      "answer": "Cassandra requires access patterns to be known upfront and baked into table designs — it has no joins, no ad-hoc aggregations, and each new query shape effectively demands a new table. An exploratory analytics workload is the definitive Cassandra anti-pattern; they need an analytical/relational engine instead."
+    },
+    {
+      "id": "cassandra-37",
+      "type": "scenario",
+      "concept": "Low-cardinality or skewed partition keys create hot partitions that overload single nodes",
+      "question": "A ride-hailing platform partitions driver GPS pings by city. The cluster as a whole is underutilized, yet the nodes holding the New York partition are constantly overloaded while nodes serving small towns idle. What is going wrong, and how should the key change?",
+      "answer": "Classic hot partition: city is a low-cardinality, heavily skewed partition key, so one giant city's traffic concentrates on a single partition's replicas no matter how many nodes exist. Repartition on a higher-cardinality key — driver_id, or a composite like (city, time bucket) — so load spreads across the ring."
+    }
+  ]
+}

@@ -591,6 +591,11 @@
   /* Throw the top card off in the committed direction and clear the stage.
      'A' left, 'B' right, anything else straight up. */
   function flyOff(choice) {
+    // The only choke point every card leaves the stage through, so it is where
+    // a mic left running on a skipped or submitted card gets released.
+    voiceStop(false);
+    voiceNote('');
+
     var card = topCard;
     if (card) {
       card.classList.remove('card--animate');
@@ -660,6 +665,15 @@
   function submitWriting() {
     if (locked || !topCard || !current || histPos !== null) return;
     if (current.kind !== 'open') return;
+
+    // Submitting mid-sentence would send whatever had been transcribed so far
+    // and drop the rest, so this stops the mic and hands it back for a read.
+    if (voice.on) {
+      voiceStop(true);
+      voiceNote('Stopped. Read it over, then Submit.');
+      return;
+    }
+
     var text = openInput ? openInput.value.trim() : '';
     if (!text) { if (openInput) openInput.focus(); return; }
 
@@ -677,14 +691,15 @@
     gradeWriting(q, text, function (result, err) {
       grading = false;
       if (!pendingOpen || pendingOpen.q !== q) return;   // run restarted mid-flight
-      if (result) settleWriting(result.verdict, result.feedback);
+      if (result) settleWriting(result.verdict, result.feedback, result.points);
       else        renderSelfMark(q, text, err);
     });
   }
 
   /* Record the marked answer and raise the ordinary verdict sheet. Called
-     either by the grader or by the self-mark buttons. */
-  function settleWriting(mark, feedback) {
+     either by the grader — which also hands over its checklist — or by the
+     self-mark buttons, which have no checklist to give. */
+  function settleWriting(mark, feedback, points) {
     var p = pendingOpen;
     if (!p) return;
     pendingOpen = null;
@@ -695,7 +710,7 @@
 
     history.push({
       q: p.q, v: v, choice: null,
-      said: p.text, note: feedback || '',
+      said: p.text, note: feedback || '', points: points || [],
       ms: p.ms, due: due
     });
     done += 1;
@@ -729,6 +744,48 @@
     var el = $(id);
     el.textContent = text || '';
     el.classList.toggle('is-hidden', !text);
+  }
+
+  /* The grader's checklist, one line per point. It says which half of "half
+     way" you had, so it earns its space on the sheet — but only when the
+     grader produced one: a self-marked card has nothing to show here. */
+  var POINT_GLYPH = {
+    demonstrated: '✓',      // ✓
+    partial:      '~',      // ~
+    missing:      '—',      // —
+    contradicted: '✕'       // ✕
+  };
+
+  function renderPoints(points) {
+    var el = $('verdict-points');
+    el.textContent = '';
+    el.classList.toggle('is-hidden', !points || !points.length);
+    if (!points || !points.length) return;
+
+    points.forEach(function (p) {
+      var li = document.createElement('li');
+      li.className = 'point point--' + p.status;
+
+      var mark = document.createElement('span');
+      mark.className = 'point__mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = POINT_GLYPH[p.status] || '';
+
+      var text = document.createElement('span');
+      text.className = 'point__text';
+      text.textContent = p.point;
+
+      // The glyph and the colour carry the status on screen, and neither
+      // survives being read aloud, so it goes in words too.
+      var sr = document.createElement('span');
+      sr.className = 'sr-only';
+      sr.textContent = ' — ' + p.status;
+
+      li.appendChild(mark);
+      li.appendChild(text);
+      li.appendChild(sr);
+      el.appendChild(li);
+    });
   }
 
   function renderVerdict(e, hist) {
@@ -765,6 +822,7 @@
 
     slot('verdict-said',  open && e.said ? '“' + e.said + '”' : '');
     $('verdict-line').textContent = line;
+    renderPoints(open ? e.points : null);
     slot('verdict-model', open ? 'Model answer: ' + right : '');
     $('verdict-why').textContent  = q.explanation;
     $('verdict-grade').classList.add('is-hidden');
@@ -782,7 +840,7 @@
       : 'tap anywhere, or press space';
 
     // Hand this card to the Ask panel and start it on a clean thread.
-    askCtx     = { q: q, v: e.v, choice: e.choice, said: e.said, note: e.note };
+    askCtx     = { q: q, v: e.v, choice: e.choice, said: e.said, note: e.note, points: e.points };
     askHistory = [];
     askResetLog();
 
@@ -797,6 +855,7 @@
     $('verdict-mark').textContent = 'Marking…';
     slot('verdict-said', '“' + text + '”');
     $('verdict-line').textContent = 'Checking it against the model answer.';
+    renderPoints(null);
     slot('verdict-model', '');
     $('verdict-why').textContent = '';
     $('verdict-grade').classList.add('is-hidden');
@@ -815,6 +874,7 @@
     $('verdict-mark').textContent = 'Mark it yourself';
     slot('verdict-said', '“' + text + '”');
     $('verdict-line').textContent = why || '';
+    renderPoints(null);
     slot('verdict-model', 'Model answer: ' + answerLabel(q));
     $('verdict-why').textContent = q.explanation;
     $('verdict-grade').classList.remove('is-hidden');
@@ -950,6 +1010,11 @@
       if (c.said) card.push('What the user wrote: ' + c.said);
       if (c.note) card.push('How it was marked: ' + did + ' — ' + c.note);
       else card.push('Outcome: the user ' + did);
+      // The point-by-point mark is usually what they are about to query.
+      if (c.points && c.points.length) {
+        card.push('Point by point:');
+        c.points.forEach(function (p) { card.push('- ' + p.point + ': ' + p.status); });
+      }
     } else {
       var picked = c.choice === 'A' ? q.optionA : c.choice === 'B' ? q.optionB : null;
       card.push('Left option (A): ' + q.optionA);
@@ -1260,34 +1325,75 @@
      the substance matches. That is a small job, so it runs on Haiku — cheap and
      quick enough that a card does not feel like it stalled.
 
-     Structured output pins the reply to a verdict plus one line of feedback,
-     which means no prose parsing and no chance of a mark the app cannot read.
-     One non-streaming call; short answer, nothing to stream.
+     The mark is made point by point rather than in one judgement. Nearly every
+     written card ships a `keyPoints` checklist, so the marking is mostly a
+     lookup: for each point, did they get it across, and what in their answer
+     says so. The verdict comes after, out of what that pass found — which is
+     the whole reason the checklist is first in the schema. Structured output
+     fills fields in order, so a checklist above the verdict is working out,
+     while one below it is a justification written to fit a mark already
+     chosen. The learner sees the same list, which turns "half way" into
+     something specific enough to act on.
+
+     `evidence` is grading discipline, not display: making the model point at
+     the words that earned a tick is what stops a vague answer being credited
+     with an idea it only gestured at. Nothing renders it.
+
+     Deliberately not asked for: a 0–100 score, which has nowhere to go in a
+     three-outcome schedule and invites precision the model cannot hold; and a
+     resurface flag, which FSRS already decides from the verdict and the time
+     taken. One non-streaming call — short answer, nothing to stream.
      ========================================================================= */
   var GRADE_MODEL   = 'claude-haiku-4-5';
-  var GRADE_MAX_TOK = 512;
+  var GRADE_MAX_TOK = 1024;
 
   var GRADE_SCHEMA = {
     type: 'object',
     properties: {
+      points: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            point:    { type: 'string' },
+            status:   { type: 'string', enum: ['demonstrated', 'partial', 'missing', 'contradicted'] },
+            evidence: { type: 'string' }
+          },
+          required: ['point', 'status', 'evidence'],
+          additionalProperties: false
+        }
+      },
       verdict:  { type: 'string', enum: ['correct', 'partial', 'incorrect'] },
       feedback: { type: 'string' }
     },
-    required: ['verdict', 'feedback'],
+    required: ['points', 'verdict', 'feedback'],
     additionalProperties: false
   };
 
   function gradeSystem() {
     return [
       'You are marking a short written answer in Chalkboard, a drill on machine-learning metrics and the backend systems around them.',
-      'You are given the question, the reference answer the deck ships with, and what the learner wrote. Mark the learner on substance only.',
+      'You are given the question, the reference answer the deck ships with, and what the learner wrote. Mark on substance only: the question is whether their answer shows the underlying idea, not whether it reads like the reference.',
       '',
-      'They do not have to match the reference answer\'s wording, structure or length, and they are not expected to cover anything the question did not ask for.',
+      'Work in the order the output asks for. Check the points first, then let the verdict fall out of what you found — do not settle on a mark and fit the points to it.',
+      '',
+      'points — what this answer has to get across.',
+      'If <must_cover> is given, those are the points: take them in order, verbatim, and add none of your own. Otherwise read them out of the reference answer, at most four, each a short phrase. Either way a point is something the question actually asked for. Detail the reference happens to carry but the question did not ask for is not a point, and its absence is not a miss.',
+      '',
+      'status, for each point:',
+      'demonstrated — they got the idea across. Synonyms, paraphrase, abbreviations, a different route to the same place and far terser phrasing all count.',
+      'partial — the idea is there but too loose to be sure they mean it, or right in outline and wrong in a detail.',
+      'missing — they did not say it. An answer vague enough to be read several ways has not said it: do not credit what is not on the page.',
+      'contradicted — they claimed something that cannot be true if this point is true.',
+      '',
+      'evidence — the few words of their answer that decided the status, quoted or closely paraphrased. Empty string when the point is missing.',
       '',
       'verdict:',
-      'correct — the substance of the reference answer is there. An answer that is right but much terser than the reference is correct, not partial.',
-      'partial — part of it is right, or the conclusion is right for the wrong reason, or it misses something the question explicitly asked for.',
-      'incorrect — wrong, backwards, blank, or a restatement of the question with nothing added.',
+      'correct — every point demonstrated, or all but a partial on a minor one, and nothing contradicted. An answer that is right but much shorter than the reference is correct, not partial.',
+      'partial — the core idea is there, but a point is missing, too vague to credit, or slightly off.',
+      'incorrect — the core idea is missing or misunderstood, or most points are absent. Anything contradicted caps the mark below correct, and a contradiction that changes the meaning of the answer makes it incorrect however much else is right. Blank answers and restatements of the question are incorrect.',
+      '',
+      'Be lenient about wording and strict about understanding. Wrong terminology over sound reasoning is not worth marking down; the right term with nothing behind it is not a point demonstrated.',
       '',
       'feedback: one or two sentences, addressed to the learner as "you". If it is correct, say in a few words what they got and stop. Otherwise name the specific gap rather than restating the reference answer. Plain text only — no markdown, no bullets.',
       '',
@@ -1307,7 +1413,26 @@
     return parts.join('\n');
   }
 
-  /* cb(result, err) — exactly one of the two. result is { verdict, feedback }. */
+  var POINT_STATUS = ['demonstrated', 'partial', 'missing', 'contradicted'];
+
+  /* The schema constrains all of this, but the reply is still parsed as if it
+     might not: a malformed checklist should cost the learner the checklist,
+     not the mark. */
+  function gradePoints(raw) {
+    if (!raw || !raw.length) return [];
+    var out = [];
+    for (var i = 0; i < raw.length; i++) {
+      var p = raw[i] || {};
+      var text = String(p.point || '').trim();
+      if (text && POINT_STATUS.indexOf(p.status) >= 0) {
+        out.push({ point: text, status: p.status });
+      }
+    }
+    return out;
+  }
+
+  /* cb(result, err) — exactly one of the two.
+     result is { verdict, feedback, points: [{ point, status }] }. */
   function gradeWriting(q, text, cb) {
     var key = keyGet();
     if (!key) { cb(null, 'No API key on this device, so nothing marked it.'); return; }
@@ -1341,12 +1466,367 @@
       if (['correct', 'partial', 'incorrect'].indexOf(parsed.verdict) < 0) {
         throw new Error('The grader came back with a mark this app does not know.');
       }
-      cb({ verdict: parsed.verdict, feedback: String(parsed.feedback || '') }, null);
+      cb({
+        verdict:  parsed.verdict,
+        feedback: String(parsed.feedback || ''),
+        points:   gradePoints(parsed.points)
+      }, null);
     }).catch(function (err) {
       cb(null, err instanceof TypeError
         ? 'Could not reach the grader — check your connection.'
         : ((err && err.message) || 'Grading failed.'));
     });
+  }
+
+  /* =========================================================================
+     VOICE — speak a written answer instead of typing it.
+
+     Thumb-typing three sentences of reasoning on a phone is enough friction to
+     make you skip the card, which defeats the point of having written cards at
+     all. So the mic streams what you say into the box: audio goes to OpenAI's
+     realtime endpoint as 24 kHz PCM and transcript deltas come back and land in
+     the textarea while you are still talking.
+
+     It is only ever an input method. The text is yours to edit before you
+     submit, and the grader is handed the same string either way — nothing about
+     the card, the marking or the schedule knows it was spoken.
+
+     Same key story as Ask: no backend, so the key is the user's own and lives in
+     this browser. OpenAI names the browser subprotocol `openai-insecure-api-key`,
+     which is a fair description — see the README on when not to use this build.
+     ========================================================================= */
+  var VOICE_URL    = 'wss://api.openai.com/v1/realtime?intent=transcription';
+  var VOICE_MODEL  = 'gpt-live-transcribe';
+  var VOICE_RATE   = 24000;   // the endpoint's required input sample rate
+  var VOICE_FRAME  = 2400;    // flush threshold in samples — about 100 ms at 24 kHz
+  var VOICE_KEY_LS = 'metric-board.openai-key';
+
+  /* The worklet does nothing but hand each block of samples to the main thread:
+     resampling and encoding are cheap and much easier to read out here. Built
+     from a string because this project has no build step and one more network
+     file would be one more thing to cache. */
+  var VOICE_WORKLET = [
+    'class Tap extends AudioWorkletProcessor {',
+    '  process (inputs) {',
+    '    const ch = inputs[0] && inputs[0][0];',
+    '    if (ch && ch.length) this.port.postMessage(ch.slice(0));',
+    '    return true;',
+    '  }',
+    '}',
+    'registerProcessor("tap", Tap);'
+  ].join('\n');
+
+  var voice = {
+    on:    false,   // capturing
+    ws:    null,
+    ctx:   null,    // AudioContext
+    node:  null,    // AudioWorkletNode
+    src:   null,
+    mute:  null,
+    stream: null,   // MediaStream, so we can stop the track and drop the red dot
+    pend:  [],      // samples buffered toward the next frame
+    base:  '',      // textarea content when recording started
+    items: [],      // [{ id, text, done }] in arrival order
+    ta:    null     // the textarea being dictated into
+  };
+
+  function oaiKeyGet() {
+    try { return localStorage.getItem(VOICE_KEY_LS) || ''; } catch (e) { return ''; }
+  }
+  function oaiKeySet(v) {
+    try {
+      if (v) localStorage.setItem(VOICE_KEY_LS, v);
+      else   localStorage.removeItem(VOICE_KEY_LS);
+    } catch (e) { /* non-fatal — the key just won't persist */ }
+  }
+
+  function voiceNote(text, bad) {
+    var el = $('voice-note');
+    el.textContent = text || '';
+    el.classList.toggle('is-hidden', !text);
+    el.classList.toggle('is-bad', !!bad);
+  }
+
+  function voiceChrome() {
+    var btn = $('btn-open-mic');
+    btn.classList.toggle('is-live', voice.on);
+    btn.setAttribute('aria-pressed', String(voice.on));
+    $('mic-label').textContent = voice.on ? 'Stop' : 'Speak';
+  }
+
+  /* ---- audio plumbing ----------------------------------------------------- */
+  /* Float32 −1..1 at whatever rate the context gave us → little-endian PCM16 at
+     24 kHz. The context is asked for 24 kHz and usually obliges, in which case
+     `from === to` and this is a straight conversion; when a browser ignores the
+     request we box-average down instead, which beats dropping samples. */
+  function toPcm16(f32, from, to) {
+    var n = from === to ? f32.length : Math.floor(f32.length * to / from);
+    var out = new Int16Array(n);
+    var step = from / to;
+    for (var i = 0; i < n; i++) {
+      var s;
+      if (step === 1) {
+        s = f32[i];
+      } else {
+        var a = Math.floor(i * step), b = Math.min(f32.length, Math.floor((i + 1) * step));
+        var sum = 0, k = 0;
+        for (var j = a; j < b; j++) { sum += f32[j]; k++; }
+        s = k ? sum / k : 0;
+      }
+      s = s < -1 ? -1 : s > 1 ? 1 : s;
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return out;
+  }
+
+  function toBase64(int16) {
+    var bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
+    var s = '';
+    // Chunked, because String.fromCharCode.apply blows the stack on long arrays.
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(s);
+  }
+
+  /* Collect worklet blocks into frames of roughly 100 ms — one message per
+     128-sample block would be several hundred websocket writes a second. Blocks
+     are never split, so a frame is the first whole number of them past the
+     threshold (2432 samples in practice); the endpoint takes any length. */
+  function voiceFeed(block) {
+    if (!voice.on) return;
+    voice.pend.push(block);
+    var total = 0, i;
+    for (i = 0; i < voice.pend.length; i++) total += voice.pend[i].length;
+    if (total < VOICE_FRAME) return;
+
+    var joined = new Float32Array(total), at = 0;
+    for (i = 0; i < voice.pend.length; i++) { joined.set(voice.pend[i], at); at += voice.pend[i].length; }
+    voice.pend = [];
+    voiceSend({
+      type: 'input_audio_buffer.append',
+      audio: toBase64(toPcm16(joined, voice.ctx.sampleRate, VOICE_RATE))
+    });
+  }
+
+  function voiceSend(msg) {
+    if (voice.ws && voice.ws.readyState === 1) voice.ws.send(JSON.stringify(msg));
+  }
+
+  /* ---- transcript --------------------------------------------------------- */
+  /* Deltas and completions both carry an item_id, so the text is kept per item
+     in arrival order rather than blindly appended: a completed transcript
+     replaces the deltas that built it, which is how corrections land. */
+  function voiceItem(id) {
+    for (var i = 0; i < voice.items.length; i++) if (voice.items[i].id === id) return voice.items[i];
+    var it = { id: id, text: '', done: false };
+    voice.items.push(it);
+    return it;
+  }
+
+  function voiceRender() {
+    if (!voice.ta || !voice.ta.isConnected) return;
+    var said = voice.items.map(function (i) { return i.text; })
+                          .join(' ').replace(/\s+/g, ' ').trim();
+    if (!said) { voice.ta.value = voice.base; return; }
+    voice.ta.value = voice.base ? voice.base.replace(/\s*$/, '') + ' ' + said : said;
+    voice.ta.scrollTop = voice.ta.scrollHeight;
+  }
+
+  function voiceEvent(ev) {
+    switch (ev.type) {
+      case 'conversation.item.input_audio_transcription.delta':
+        voiceItem(ev.item_id).text += (ev.delta || '');
+        voiceRender();
+        break;
+      case 'conversation.item.input_audio_transcription.completed':
+        var it = voiceItem(ev.item_id);
+        it.text = ev.transcript || it.text;
+        it.done = true;
+        voiceRender();
+        break;
+      case 'error':
+        voiceStop(false);
+        voiceNote((ev.error && ev.error.message) || 'The transcriber returned an error.', true);
+        break;
+    }
+  }
+
+  /* ---- start / stop ------------------------------------------------------- */
+  function voiceToggle() {
+    if (voice.on) { voiceStop(true); return; }
+    if (!oaiKeyGet()) { openGate(); return; }   // no key: ask for one, then come back
+    voiceStart();
+  }
+
+  function voiceStart() {
+    var ta = openInput;
+    if (!ta || !current || current.kind !== 'open' || locked) return;
+
+    if (!navigator.mediaDevices || !window.AudioWorkletNode || !window.WebSocket) {
+      voiceNote('This browser cannot capture audio. Type the answer instead.', true);
+      return;
+    }
+
+    voiceNote('Connecting…');
+    voice.ta    = ta;
+    voice.base  = ta.value;
+    voice.items = [];
+    voice.pend  = [];
+
+    navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    }).then(function (stream) {
+      voice.stream = stream;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      voice.ctx = new Ctx({ sampleRate: VOICE_RATE });
+      var url = URL.createObjectURL(new Blob([VOICE_WORKLET], { type: 'application/javascript' }));
+      return voice.ctx.audioWorklet.addModule(url).then(function () {
+        URL.revokeObjectURL(url);
+        return stream;
+      });
+    }).then(function (stream) {
+      voice.src  = voice.ctx.createMediaStreamSource(stream);
+      voice.node = new AudioWorkletNode(voice.ctx, 'tap');
+      voice.node.port.onmessage = function (e) { voiceFeed(e.data); };
+      // A worklet only runs while something pulls it, so the graph has to reach
+      // the destination — through a silent gain, since there is nothing to hear.
+      voice.mute = voice.ctx.createGain();
+      voice.mute.gain.value = 0;
+      voice.src.connect(voice.node);
+      voice.node.connect(voice.mute);
+      voice.mute.connect(voice.ctx.destination);
+      return voiceOpen();
+    }).catch(function (err) {
+      voiceStop(false);
+      voiceNote(voiceError(err), true);
+    });
+  }
+
+  function voiceOpen() {
+    return new Promise(function (resolve, reject) {
+      var ws;
+      try {
+        ws = new WebSocket(VOICE_URL, ['realtime', 'openai-insecure-api-key.' + oaiKeyGet()]);
+      } catch (e) { reject(e); return; }
+      voice.ws = ws;
+
+      ws.onopen = function () {
+        // Manual turn handling: one commit when the speaker taps Stop, rather
+        // than letting server VAD chop a considered answer at every pause.
+        voiceSend({
+          type: 'session.update',
+          session: {
+            type: 'transcription',
+            audio: {
+              input: {
+                format: { type: 'audio/pcm', rate: VOICE_RATE },
+                transcription: { model: VOICE_MODEL },
+                turn_detection: null
+              }
+            }
+          }
+        });
+        voice.on = true;
+        voiceChrome();
+        voiceNote('Listening — tap Stop when you are done.');
+        resolve();
+      };
+
+      ws.onmessage = function (e) {
+        var ev;
+        try { ev = JSON.parse(e.data); } catch (err) { return; }
+        voiceEvent(ev);
+      };
+
+      ws.onerror = function () {
+        // The close handler carries the useful detail; this only fires first.
+        if (!voice.on) reject(new Error('Could not reach the transcriber.'));
+      };
+
+      ws.onclose = function (e) {
+        var wasOn = voice.on;
+        voiceTeardown();
+        if (wasOn && e && e.code !== 1000) {
+          voiceNote(e.code === 1008 || e.code === 4001
+            ? 'That OpenAI key was rejected. Replace it from the start screen.'
+            : 'The transcriber disconnected. What you had is still in the box.', true);
+        }
+      };
+    });
+  }
+
+  /* Stop capturing. `commit` flushes the tail of the audio and asks for the
+     final transcript; the socket is left open a moment to receive it. */
+  function voiceStop(commit) {
+    if (!voice.on) { voiceTeardown(); return; }
+    voice.on = false;
+    voiceChrome();
+
+    if (commit && voice.ws && voice.ws.readyState === 1) {
+      if (voice.pend.length) {
+        var total = 0, i;
+        for (i = 0; i < voice.pend.length; i++) total += voice.pend[i].length;
+        var joined = new Float32Array(total), at = 0;
+        for (i = 0; i < voice.pend.length; i++) { joined.set(voice.pend[i], at); at += voice.pend[i].length; }
+        voice.pend = [];
+        voiceSend({
+          type: 'input_audio_buffer.append',
+          audio: toBase64(toPcm16(joined, voice.ctx.sampleRate, VOICE_RATE))
+        });
+      }
+      voiceSend({ type: 'input_audio_buffer.commit' });
+      voiceNote('Finishing…');
+      var ws = voice.ws;
+      window.setTimeout(function () {
+        if (voice.ws === ws) voiceTeardown();
+        voiceNote('');
+      }, 1500);
+      voiceStopAudio();                 // the mic goes off now, not in 1.5s
+      return;
+    }
+
+    voiceTeardown();
+    voiceNote('');
+  }
+
+  /* Release the microphone. Split out because stopping capture and closing the
+     socket happen at different moments on a normal commit. */
+  function voiceStopAudio() {
+    try { if (voice.node) voice.node.port.onmessage = null; } catch (e) { /* gone */ }
+    try { if (voice.src)  voice.src.disconnect(); } catch (e) { /* gone */ }
+    try { if (voice.node) voice.node.disconnect(); } catch (e) { /* gone */ }
+    try { if (voice.mute) voice.mute.disconnect(); } catch (e) { /* gone */ }
+    if (voice.stream) {
+      voice.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* gone */ } });
+    }
+    if (voice.ctx && voice.ctx.state !== 'closed') {
+      try { voice.ctx.close(); } catch (e) { /* gone */ }
+    }
+    voice.node = voice.src = voice.mute = voice.stream = voice.ctx = null;
+  }
+
+  function voiceTeardown() {
+    voice.on = false;
+    voiceStopAudio();
+    if (voice.ws) {
+      var ws = voice.ws;
+      voice.ws = null;
+      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+      try { if (ws.readyState <= 1) ws.close(1000); } catch (e) { /* already gone */ }
+    }
+    voice.pend = [];
+    voiceChrome();
+  }
+
+  function voiceError(err) {
+    var name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return 'Microphone permission was denied. Type the answer instead.';
+    }
+    if (name === 'NotFoundError') return 'No microphone on this device.';
+    if (name === 'NotReadableError') return 'Something else is using the microphone.';
+    return (err && err.message) || 'Could not start the microphone.';
   }
 
   function askHttpError(status, text) {
@@ -1438,6 +1918,8 @@
     pendingOpen = null;
     closeAsk();
     setKbQ(0);
+    voiceStop(false);
+    voiceNote('');
 
     var count = function (v) {
       return history.filter(function (r) { return r.v === v; }).length;
@@ -1564,6 +2046,8 @@
 
     closeAsk();
     setKbQ(0);
+    voiceStop(false);
+    voiceNote('');
     verdict.classList.add('is-hidden');
     show('quiz');
     advance();
@@ -1599,15 +2083,19 @@
   }
 
   function openGate() {
-    var has = !!keyGet();
+    var hasA = !!keyGet(), hasO = !!oaiKeyGet();
     $('gate-input').value = '';
-    $('gate-eyebrow').textContent = gateThen ? 'before you start' : 'ask';
-    $('gate-title').textContent   = has ? 'Replace your API key' : 'Anthropic API key';
-    $('btn-gate-save').textContent = gateThen ? 'Save & start' : 'Save key';
-    $('btn-gate-skip').textContent = gateThen ? 'Start without it' : 'Close';
-    $('btn-gate-forget').classList.toggle('is-hidden', !has);
+    $('gate-oai').value   = '';
+    $('gate-eyebrow').textContent = gateThen ? 'before you start' : 'keys';
+    $('gate-title').textContent   = (hasA || hasO) ? 'API keys' : 'API keys';
+    $('btn-gate-save').textContent = gateThen ? 'Save & start' : 'Save';
+    $('btn-gate-skip').textContent = gateThen ? 'Start without them' : 'Close';
+    $('btn-gate-forget').classList.toggle('is-hidden', !(hasA || hasO));
+    // A stored key is never shown back, so the placeholder is what says it is there.
+    $('gate-input').placeholder = hasA ? 'stored — type to replace' : 'sk-ant-…';
+    $('gate-oai').placeholder   = hasO ? 'stored — type to replace' : 'sk-…';
     gate.classList.remove('is-hidden');
-    $('gate-input').focus({ preventScroll: true });
+    (hasA && !hasO ? $('gate-oai') : $('gate-input')).focus({ preventScroll: true });
   }
 
   function closeGate() {
@@ -1619,11 +2107,13 @@
   }
 
   function keyStateLine() {
-    var has = !!keyGet();
-    $('key-state').textContent = has
-      ? 'Ask key stored on this device.'
-      : 'No Ask key yet — the deck works without one.';
-    $('btn-key-open').textContent = has ? 'replace' : 'add one';
+    var hasA = !!keyGet(), hasO = !!oaiKeyGet();
+    $('key-state').textContent =
+      hasA && hasO ? 'Ask and voice keys stored on this device.' :
+      hasA         ? 'Ask key stored. No voice key, so written cards are typed.' :
+      hasO         ? 'Voice key stored. No Ask key, so nothing marks written answers.' :
+                     'No API keys yet — the deck works without them.';
+    $('btn-key-open').textContent = (hasA || hasO) ? 'manage' : 'add one';
   }
 
   /* ---- topic picker -------------------------------------------------------
@@ -1703,6 +2193,7 @@
 
   $('btn-open-submit').addEventListener('click', submitWriting);
   $('btn-open-skip').addEventListener('click',   function () { commit('skip'); });
+  $('btn-open-mic').addEventListener('click',    voiceToggle);
 
   // Self-marking, when the grader could not be reached.
   $('verdict-grade').addEventListener('click', function (e) {
@@ -1729,9 +2220,13 @@
 
   $('btn-key-open').addEventListener('click', openGate);
   $('btn-gate-save').addEventListener('click', function () {
-    var v = $('gate-input').value.trim();
-    if (!v) { $('gate-input').focus(); return; }
-    keySet(v);
+    var a = $('gate-input').value.trim();
+    var o = $('gate-oai').value.trim();
+    if (!a && !o) { $('gate-input').focus(); return; }   // nothing to save
+    if (a) keySet(a);
+    if (o) oaiKeySet(o);
+    $('gate-input').value = '';
+    $('gate-oai').value   = '';
     askMode();
     closeGate();
   });
@@ -1741,11 +2236,14 @@
   });
   $('btn-gate-forget').addEventListener('click', function () {
     keySet('');
+    oaiKeySet('');
     askMode();
     openGate();
   });
-  $('gate-input').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); $('btn-gate-save').click(); }
+  ['gate-input', 'gate-oai'].forEach(function (id) {
+    $(id).addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); $('btn-gate-save').click(); }
+    });
   });
 
   $('btn-forget-memory').addEventListener('click', function () {

@@ -1,0 +1,250 @@
+{
+  "section": "patterns",
+  "subsection": "Dealing with Contention",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/dealing-with-contention",
+  "concepts": [
+    "Contention is about competition for one resource, not total load",
+    "Check-then-act race condition from separate read, check, and write",
+    "Conditional (atomic) write with the check in the WHERE clause",
+    "Conditional writes only cover single-statement logic",
+    "Atomic operations in a KV store (Redis INCR) replace read-modify-write",
+    "Pessimistic locking mechanics via SELECT ... FOR UPDATE",
+    "Never hold row locks and connections across slow external calls",
+    "FOR UPDATE NOWAIT to fail fast instead of queueing on a lock",
+    "FOR UPDATE SKIP LOCKED for database-backed job queues",
+    "Deadlocks from opposite lock order; prevent with consistent ordering",
+    "Lock/statement timeouts as a bounded-wait safety net",
+    "Optimistic concurrency control with a version column",
+    "OCC retries must be bounded with backoff and jitter",
+    "High contention breaks OCC; hot resources need pessimistic or serialized writes",
+    "The ABA problem: value comparison misses intervening changes",
+    "SERIALIZABLE isolation aborts conflicting transactions; app must retry them",
+    "A plain transaction at read committed does not prevent the race",
+    "Write skew: disjoint writes evade row locks; serialize or lock what you read",
+    "Model long-held reservations as data with an expiry, not as locks",
+    "Distributed locks fit cross-system resources no single database owns",
+    "Distributed locks need a TTL so crashed holders self-release",
+    "Fencing tokens protect against zombie lock holders after TTL expiry",
+    "Databases are built for contention — don't bolt on external coordination for single-DB state",
+    "Two-phase commit is blocking and fragile; prefer single-DB or saga alternatives",
+    "Escalation ladder: simplest sufficient mechanism first",
+    "Interview recognition signals for contention problems",
+    "Don't overcomplicate: commutative operations without a scarcity invariant need no locking",
+    "Hot-row mitigation with sharded counters",
+    "Queue-based serialization: a single ordered writer per resource instead of locks"
+  ],
+  "question_count": 29,
+  "questions": [
+    {
+      "id": "dealing-with-contention-01",
+      "type": "true_false",
+      "concept": "Contention is about competition for one resource, not total load",
+      "question": "Contention and load are the same problem: a service handling 50,000 requests per second necessarily has a serious contention problem.",
+      "answer": "False — contention means many concurrent operations targeting the same resource (one seat, one row, one counter). Massive traffic spread across millions of independent resources can have zero contention, while a tiny site selling one concert ticket can have severe contention."
+    },
+    {
+      "id": "dealing-with-contention-02",
+      "type": "scenario",
+      "concept": "Check-then-act race condition from separate read, check, and write",
+      "question": "An online merch store runs a flash sale for 100 limited hoodies. Checkout code does SELECT stock FROM items, checks stock > 0 in application code, then runs UPDATE items SET stock = stock - 1. After the sale, stock reads -37 and there are 137 paid orders. What went wrong?",
+      "answer": "A check-then-act race: between one request's read and its write, other requests read the same stale stock and also passed the check, so all of them decremented. The read, the check, and the write happen as separate steps, and under concurrency they interleave — the check must be made atomic with the write."
+    },
+    {
+      "id": "dealing-with-contention-03",
+      "type": "scenario",
+      "concept": "Conditional (atomic) write with the check in the WHERE clause",
+      "question": "A fintech's gift-card service occasionally lets a card holding $20 make two simultaneous $20 purchases, leaving the balance at -$20. The team wants the smallest fix — no new locks, no new infrastructure. What should they change?",
+      "answer": "Use a conditional write: a single UPDATE cards SET balance = balance - 20 WHERE id = ? AND balance >= 20, then check rows-affected — zero rows means decline the purchase. The database applies the check and the decrement atomically, so concurrent requests can no longer both pass a stale check."
+    },
+    {
+      "id": "dealing-with-contention-04",
+      "type": "scenario",
+      "concept": "Conditional writes only cover single-statement logic",
+      "question": "A clinic-scheduling SaaS fixed double-booked slots with UPDATE slots SET status='booked' WHERE id=? AND status='open'. A new rule now requires verifying, before booking, that the patient has no outstanding balance and no same-day appointment (both in other tables), and writing to an appointments table plus an audit table. Why is the conditional write no longer sufficient by itself?",
+      "answer": "A conditional write only protects logic that fits inside one statement's predicate on the row being written. Checks spanning other tables and writes spanning multiple rows need a transaction with explicit locking (or serializable isolation) so the entire multi-step decision is atomic."
+    },
+    {
+      "id": "dealing-with-contention-05",
+      "type": "scenario",
+      "concept": "Atomic operations in a KV store (Redis INCR) replace read-modify-write",
+      "question": "An API gateway enforces 100 requests/minute per key using Redis: it GETs the counter, compares it to 100 in Node, then SETs counter+1. During bursts, clients consistently get 130-140 requests through. What should the team change?",
+      "answer": "Replace the GET/compare/SET sequence with Redis's atomic INCR and check the returned value against the limit. The GET-then-SET pair is the same check-then-act race as a SQL read-then-update — concurrent requests all read the same stale count — and a single atomic operation in the store closes the gap."
+    },
+    {
+      "id": "dealing-with-contention-06",
+      "type": "scenario",
+      "concept": "Pessimistic locking mechanics via SELECT ... FOR UPDATE",
+      "question": "A food-delivery platform sometimes assigns one courier to two orders placed in the same second. The team wants the second concurrent transaction to block until the first commits, then see the courier's updated status before deciding. Which database mechanism does exactly this, and how?",
+      "answer": "Pessimistic locking with SELECT ... FOR UPDATE inside the transaction: it takes an exclusive lock on the courier's row at read time, so the second transaction waits at its own SELECT, and when the first commits it reads the fresh committed state and sees the courier is already taken."
+    },
+    {
+      "id": "dealing-with-contention-07",
+      "type": "scenario",
+      "concept": "Never hold row locks and connections across slow external calls",
+      "question": "A ticketing site locks the seat row with SELECT ... FOR UPDATE, then calls the payment processor (2-8 seconds) inside the same transaction before committing. During a big on-sale, the database becomes unresponsive and the connection pool exhausts. What is the design mistake?",
+      "answer": "Holding a row lock — and the database connection carrying it — across a slow external call. Locks should live for milliseconds, not payment round-trips; every waiting buyer stacks up behind the lock while connections drain. Take payment outside the transaction and represent the hold as short-lived data (a reservation with an expiry) instead."
+    },
+    {
+      "id": "dealing-with-contention-08",
+      "type": "scenario",
+      "concept": "FOR UPDATE NOWAIT to fail fast instead of queueing on a lock",
+      "question": "In a game's player-to-player marketplace, when two players click Buy on the same rare item, the loser's request queues behind the winner's row lock and only errors seconds later, wasting a connection the whole time. Product wants the second buyer told 'someone beat you to it' instantly. What locking option fits?",
+      "answer": "SELECT ... FOR UPDATE NOWAIT: if the row is already locked, the query errors immediately instead of waiting, so the app can instantly return 'this item is being purchased' without tying up a connection in the lock queue."
+    },
+    {
+      "id": "dealing-with-contention-09",
+      "type": "scenario",
+      "concept": "FOR UPDATE SKIP LOCKED for database-backed job queues",
+      "question": "A marketing SaaS stores outgoing email jobs in a table, and 20 workers each SELECT the oldest pending row FOR UPDATE. Nineteen workers sit blocked behind whichever one got there first, so the fleet processes jobs almost serially. How should the query change?",
+      "answer": "Add SKIP LOCKED: each worker skips rows locked by others and claims the next unlocked job, so the 20 workers spread across 20 different rows instead of convoying on one. This is the standard pattern for using a relational table as a concurrent job queue."
+    },
+    {
+      "id": "dealing-with-contention-10",
+      "type": "scenario",
+      "concept": "Deadlocks from opposite lock order; prevent with consistent ordering",
+      "question": "A P2P payments app locks both account rows when processing a transfer. When Alice pays Bob at the same moment Bob pays Alice, both transactions hang until the database kills one with a deadlock error. What is happening, and what is the standard prevention?",
+      "answer": "Each transaction locked its first account and is waiting for the other's — a circular wait, i.e., a deadlock, caused by acquiring locks in opposite orders. Prevent it by always acquiring locks in one global order (e.g., sort the two account IDs and lock the lower one first), which makes circular waits impossible."
+    },
+    {
+      "id": "dealing-with-contention-11",
+      "type": "scenario",
+      "concept": "Lock/statement timeouts as a bounded-wait safety net",
+      "question": "A B2B analytics platform sees occasional API requests hang for minutes because they are waiting on a row lock held by a stuck nightly batch job. The team cannot guarantee every lock holder will always be fast. What safety net should the request path add?",
+      "answer": "Configure a lock (or statement) timeout of a few seconds so waiters fail fast with an error instead of hanging indefinitely. A bounded wait converts a silent multi-minute stall into a quick, visible, retryable failure."
+    },
+    {
+      "id": "dealing-with-contention-12",
+      "type": "scenario",
+      "concept": "Optimistic concurrency control with a version column",
+      "question": "In a headless CMS, two editors open the same article and whoever saves last silently wipes out the other's changes. Concurrent edits to the same article are rare. Which mechanism fits, and how does it work?",
+      "answer": "Optimistic concurrency control: store a version number on the article, read it along with the content, and save with UPDATE ... WHERE id = ? AND version = <version you read>, incrementing the version. Zero rows affected means someone saved first, so you reject or merge instead of silently overwriting — and because conflicts are rare, no locks are held while users edit."
+    },
+    {
+      "id": "dealing-with-contention-13",
+      "type": "scenario",
+      "concept": "OCC retries must be bounded with backoff and jitter",
+      "question": "A note-syncing app uses version-checked writes and, on any version conflict, immediately re-reads and retries in an uncapped tight loop. During a sync storm, devices spin at full CPU and hammer the backend with retry traffic. How should the retry logic be designed?",
+      "answer": "Cap the retries at a few attempts, wait between attempts with exponential backoff plus jitter, and surface a conflict error once the budget is spent. Unbounded immediate retries turn contention into a self-amplifying retry storm."
+    },
+    {
+      "id": "dealing-with-contention-14",
+      "type": "scenario",
+      "concept": "High contention breaks OCC; hot resources need pessimistic or serialized writes",
+      "question": "A sneaker-drop platform uses version-column optimistic writes on each shoe's stock row. During drops, about 5,000 buyers hit one row at once; each request retries dozens of times, database CPU is pegged, and only a trickle of purchases succeed. Why is this approach failing here, and what fits better?",
+      "answer": "OCC bets that conflicts are rare; with thousands of writers on one row, nearly every attempt fails its version check, so the system burns capacity on doomed retries instead of progress. For a single hot resource, serialize the writes instead — pessimistic locking, an atomic conditional decrement, or a queue in front of the row."
+    },
+    {
+      "id": "dealing-with-contention-15",
+      "type": "scenario",
+      "concept": "The ABA problem: value comparison misses intervening changes",
+      "question": "A smart-home platform updates a device's setting with 'write only if the current value still equals what I read.' A stale controller read brightness=50; meanwhile another service set it to 80 and back to 50. The stale controller's write then passes the check even though its decision was based on an outdated picture. What is this failure called, and what fixes it?",
+      "answer": "The ABA problem: the value returned to its original state, so an equality check on the value cannot see that changes happened in between. Compare a monotonically increasing version number (or generation counter) instead of the value — versions never repeat, so any intervening write makes the stale writer's check fail."
+    },
+    {
+      "id": "dealing-with-contention-16",
+      "type": "scenario",
+      "concept": "SERIALIZABLE isolation aborts conflicting transactions; app must retry them",
+      "question": "A hotel-booking team eliminates double-bookings by switching the database to SERIALIZABLE isolation. In production, users now intermittently see raw 'could not serialize access' errors during checkout. What did the team forget?",
+      "answer": "Serializable isolation works by detecting conflicting transactions and aborting one of them — those aborts are the mechanism, not a bug. The application must catch serialization failures and transparently retry the transaction a bounded number of times instead of leaking the error to users."
+    },
+    {
+      "id": "dealing-with-contention-17",
+      "type": "scenario",
+      "concept": "A plain transaction at read committed does not prevent the race",
+      "question": "A campsite-reservation site wrapped its 'read remaining sites, check > 0, decrement' logic in BEGIN ... COMMIT on Postgres at the default isolation level, expecting the transaction to stop double-bookings. Overbooking continues. Why didn't the transaction fix it?",
+      "answer": "A transaction gives atomicity of its own statements, not exclusion of concurrent readers: at read committed, two transactions can both read the same count, both pass the check, and both commit a decrement. Stopping the race requires a conditional write, SELECT FOR UPDATE, or serializable isolation — BEGIN/COMMIT alone changes nothing."
+    },
+    {
+      "id": "dealing-with-contention-18",
+      "type": "scenario",
+      "concept": "Write skew: disjoint writes evade row locks; serialize or lock what you read",
+      "question": "A hospital roster app enforces 'at least one doctor on call per shift.' Doctors Aisha and Ben are both on call tonight and both request to drop the shift at the same moment. Each transaction counts on-call doctors (sees 2), concludes one may leave, and updates only its own row; both commit, leaving zero doctors on call — despite each running in its own transaction and even having version checks on the row it wrote. What is this anomaly, and what actually prevents it?",
+      "answer": "Write skew: the two transactions read overlapping data but wrote different rows, so row locks and version checks on the written rows never conflict. Prevent it by running the transactions at SERIALIZABLE isolation (the database detects the dangerous interleaving and aborts one) or by explicitly locking the rows the check reads — e.g., SELECT ... FOR UPDATE on all of tonight's on-call rows — so the two checks serialize."
+    },
+    {
+      "id": "dealing-with-contention-19",
+      "type": "scenario",
+      "concept": "Model long-held reservations as data with an expiry, not as locks",
+      "question": "A movie-ticketing app must hold a selected seat for up to 10 minutes while the user enters payment details across several web requests. An engineer proposes keeping a SELECT ... FOR UPDATE lock on the seat row for the whole checkout. What is the right design instead?",
+      "answer": "Represent the hold as data: atomically claim the seat by setting status='held' with an expires_at timestamp, and let expired holds become reclaimable. Database locks cannot span user think-time across multiple requests — doing so would pin connections and locks for minutes and collapse the system."
+    },
+    {
+      "id": "dealing-with-contention-20",
+      "type": "scenario",
+      "concept": "Distributed locks fit cross-system resources no single database owns",
+      "question": "A video platform's transcoding workers are spread across several services; upload state lives in S3 and a third-party media SaaS, with no shared database, and two workers occasionally transcode the same upload simultaneously, doubling cost. The team has so far solved every contention problem with database row locks. Why doesn't that work here, and what does?",
+      "answer": "There is no row to lock or conditionally update — the contended resource spans systems that no single database owns, which is exactly the case for a distributed lock (e.g., Redis SET NX with a TTL, or ZooKeeper): each worker must acquire the per-upload lock before transcoding. Reserve this tool for cross-system coordination; when the state does live in one database, its native locking is simpler and safer."
+    },
+    {
+      "id": "dealing-with-contention-21",
+      "type": "scenario",
+      "concept": "Distributed locks need a TTL so crashed holders self-release",
+      "question": "A logistics platform's report scheduler takes a Redis lock (SET key NX, no expiry) so only one node runs reports. After a node crashed mid-run, no reports were produced for three days until someone deleted the key manually. What was missing?",
+      "answer": "A TTL on the lock (SET key NX PX <ttl>). A distributed lock must expire on its own so that a holder that crashes without releasing it doesn't leave the resource locked forever; the TTL is the liveness guarantee."
+    },
+    {
+      "id": "dealing-with-contention-22",
+      "type": "scenario",
+      "concept": "Fencing tokens protect against zombie lock holders after TTL expiry",
+      "question": "A cloud-storage service guards index rebuilds with a Redis lock carrying a 30-second TTL. One worker hit a long GC pause, its lock expired, a second worker acquired the lock and began writing — then the first worker woke up and kept writing too, corrupting the index. What is the standard fix beyond TTLs?",
+      "answer": "Fencing tokens: the lock service issues a monotonically increasing number with every grant, each write carries its token, and the storage layer rejects any write with a token older than the highest it has seen. The zombie's writes then fail even though it still believes it holds the lock."
+    },
+    {
+      "id": "dealing-with-contention-23",
+      "type": "scenario",
+      "concept": "Databases are built for contention — don't bolt on external coordination for single-DB state",
+      "question": "A florist marketplace keeps all inventory in one Postgres database. To stop overselling bouquets, an engineer proposes deploying a ZooKeeper cluster and requiring every service to acquire a distributed lock before touching stock. What is the better call, and why?",
+      "answer": "Use the database's own contention tools — an atomic conditional UPDATE or a row lock — because all the contended state lives in one Postgres. Databases are purpose-built for exactly this problem; adding an external coordination system introduces new failure modes to re-solve something the database already solves."
+    },
+    {
+      "id": "dealing-with-contention-24",
+      "type": "scenario",
+      "concept": "Two-phase commit is blocking and fragile; prefer single-DB or saga alternatives",
+      "question": "A warehouse system splits its data so stock lives in one database and orders in another, and every sale must decrement stock and insert an order atomically. The team starts implementing two-phase commit between the two databases. What risk are they taking on, and what alternatives should they weigh?",
+      "answer": "2PC is a blocking protocol: if the coordinator dies after the prepare phase, participants sit holding locks in limbo, and availability degrades with every participant added. Prefer keeping the contended invariant in a single database, or accept eventual consistency with a saga/outbox flow and compensation instead of distributed atomic commit."
+    },
+    {
+      "id": "dealing-with-contention-25",
+      "type": "mcq2",
+      "concept": "Escalation ladder: simplest sufficient mechanism first",
+      "question": "A food-ordering app must guarantee each promo code is redeemed at most once, and all data lives in one Postgres database. Which should the team reach for first?",
+      "options": [
+        "A single atomic UPDATE codes SET redeemed = true WHERE code = ? AND redeemed = false, checking rows affected",
+        "Running every redemption transaction at SERIALIZABLE isolation"
+      ],
+      "answer": "A single atomic UPDATE codes SET redeemed = true WHERE code = ? AND redeemed = false, checking rows affected — always start with the simplest mechanism that enforces the invariant; serializable isolation is a blunt, database-wide tool that adds abort-and-retry overhead for no extra benefit here."
+    },
+    {
+      "id": "dealing-with-contention-26",
+      "type": "mcq2",
+      "concept": "Interview recognition signals for contention problems",
+      "question": "In a system design interview, which requirement should make you immediately plan for contention handling?",
+      "options": [
+        "Users can bookmark any article to their private reading list",
+        "Exactly one support agent may claim each incoming ticket"
+      ],
+      "answer": "Exactly one support agent may claim each incoming ticket — 'exactly one' of a shared resource with many simultaneous claimants is the classic contention signal, like limited inventory or auction items; private per-user writes have no competing writers and no contention."
+    },
+    {
+      "id": "dealing-with-contention-27",
+      "type": "scenario",
+      "concept": "Don't overcomplicate: commutative operations without a scarcity invariant need no locking",
+      "question": "A social app engineer notices like counts occasionally lag behind reality and proposes wrapping every like in a Redis distributed lock to make counting 'correct'. Likes arrive at thousands per second. Is the lock warranted?",
+      "answer": "No — likes are commutative increments with no invariant to protect: there is no limited supply and nothing to oversell, so ordering does not matter. Plain atomic increments (and tolerance for briefly stale counts) are correct and fast, while a lock would only strangle throughput."
+    },
+    {
+      "id": "dealing-with-contention-28",
+      "type": "scenario",
+      "concept": "Hot-row mitigation with sharded counters",
+      "question": "A video platform stores each video's view count in a single row. For viral videos, thousands of increments per second all serialize on that one row's lock and database latency spikes. Exact real-time counts are not required. What is a standard mitigation?",
+      "answer": "Shard the counter: split it into N rows (say 16), have each increment pick one shard at random, and sum the shards on read — optionally batching increments in memory and flushing periodically. This spreads one hot row's writes across many rows, trading a slightly stale total for restored throughput."
+    },
+    {
+      "id": "dealing-with-contention-29",
+      "type": "scenario",
+      "concept": "Queue-based serialization: a single ordered writer per resource instead of locks",
+      "question": "An art-auction site sees heavy lock contention on popular lots as concurrent bids race each other. An engineer proposes dropping row locks entirely: publish every bid to a per-lot queue partition consumed by a single worker that applies bids strictly in order. What does this design buy, and what does it cost?",
+      "answer": "It buys serialization without locks: one writer per lot applies bids in a strict order, so there is no lock contention and no wasted retries even at peak. The cost is asynchrony — bids are acknowledged before they are applied, latency rises, and bidders must be notified of win/lose outcomes out-of-band instead of in the response."
+    }
+  ]
+}

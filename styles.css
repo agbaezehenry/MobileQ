@@ -98,6 +98,21 @@ body::before {
 }
 .is-hidden { display: none !important; }
 
+/* Read aloud, never drawn — for the things a glyph or a colour says on screen
+   and nowhere else. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* --kbq is the on-screen keyboard's height while a written card is being
    answered, measured off visualViewport in app.js. Padding the screen by it
    shrinks the stage instead of letting the keyboard cover the controls. */
@@ -575,6 +590,38 @@ body::before {
 .ctrl--b .ctrl__arrow { color: var(--tint-b); }
 .ctrl--skip .ctrl__arrow { color: var(--tint-skip); }
 .ctrl--send .ctrl__arrow { color: var(--right); }
+
+/* Mic. While it is live the button reads as recording — the one place in the
+   app that borrows the universal red, because that convention is worth more
+   here than the chalk palette is. */
+.ctrl--mic .ctrl__arrow { color: var(--chalk-soft); }
+.ctrl--mic.is-live {
+  background: rgba(232, 138, 125, 0.16);
+  border-color: rgba(232, 138, 125, 0.55);
+  color: var(--chalk);
+}
+.ctrl--mic.is-live .ctrl__arrow {
+  color: var(--wrong);
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.88); }
+}
+
+/* Voice status, between the card and the controls. */
+.voice-note {
+  position: relative;
+  z-index: 4;
+  margin: 0;
+  padding: 0 calc(var(--safe-r) + 20px) 6px calc(var(--safe-l) + 20px);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  color: var(--chalk-faint);
+  text-align: center;
+}
+.voice-note.is-bad { color: var(--wrong); }
 .ctrl__label {
   font-size: 0.8rem;
   line-height: 1.15;
@@ -674,6 +721,42 @@ body::before {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* The grader's checklist. Each row is a thing the answer had to say, with a
+   glyph and a colour for how it went — the detail behind "half way". Capped
+   like the quote above it so a seven-point card cannot own the whole sheet. */
+.verdict__points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.point {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--chalk-soft);
+}
+.point__mark {
+  flex: none;
+  width: 0.9em;
+  text-align: center;
+  font-size: 0.85rem;
+}
+.point__text { min-width: 0; }
+.point--demonstrated .point__mark { color: var(--right); }
+.point--partial      .point__mark { color: var(--part); }
+.point--contradicted .point__mark { color: var(--wrong); }
+.point--missing      { color: var(--chalk-faint); }
+.point--missing      .point__mark { color: var(--chalk-faint); }
+.point--demonstrated .point__text { color: var(--chalk); }
+
 .verdict__model { margin: 0; font-size: 0.95rem; color: var(--chalk); }
 
 /* Self-marking row: shown only when nothing graded the answer for you. */
@@ -750,6 +833,15 @@ body::before {
 .gate__line b { color: var(--tint-b); font-weight: 400; }
 .gate__note  { margin: 0; font-size: 0.78rem; color: var(--chalk-faint); }
 .gate__input { width: 100%; }
+
+/* One block per provider: what it unlocks, the field, where to get one. */
+.gate__field { display: grid; gap: 6px; }
+.gate__label {
+  font-size: 0.9rem;
+  color: var(--chalk);
+}
+.gate__label span { color: var(--chalk-faint); font-size: 0.82rem; }
+.gate__label b { color: var(--tint-b); font-weight: 400; }
 .gate .btn-row { margin-top: 2px; }
 .gate .footnote:empty { display: none; }
 

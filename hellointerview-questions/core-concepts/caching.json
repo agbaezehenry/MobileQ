@@ -1,0 +1,270 @@
+{
+  "section": "core-concepts",
+  "subsection": "Caching",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/caching",
+  "concepts": [
+    "Why cache: memory vs disk latency gap (~1ms Redis vs ~30-50ms database query)",
+    "Caching to offload repetitive reads from an overloaded database",
+    "External shared cache (Redis/Memcached) shared across all app servers vs per-server local caches",
+    "CDN edge caching to cut geographic latency for static media (~250-300ms origin vs ~20-40ms edge)",
+    "CDNs can cache public, non-personalized API responses, not just static assets",
+    "Client-side caching trade-off: backend has weak control over invalidation and staleness",
+    "In-process caching for small rarely-changing data (feature flags, config) removes the network hop entirely",
+    "In-process cache limitation: not shared across instances, causing divergent views",
+    "Cache-aside (lazy loading) keeps the cache lean by populating only on demand",
+    "Cache-aside miss penalty: a miss is slower than having no cache at all",
+    "Write-through: synchronous dual write gives fresh reads at the cost of slower writes",
+    "Write-through dual-write failure: partial failure leaves cache and database inconsistent",
+    "Write-behind (write-back) for high write throughput when eventual consistency is acceptable",
+    "Write-behind risk: buffered unflushed writes are lost if the cache crashes",
+    "Read-through is rarely worth proposing outside CDNs (library complexity vs cache-aside)",
+    "LRU as the safe default eviction policy that adapts to shifting access patterns",
+    "LFU for durably popular items and resistance to one-off scan pollution",
+    "FIFO's flaw: evicts by insertion age and throws out still-hot items",
+    "TTL bounds staleness and composes with size-based eviction policies",
+    "Cache stampede (thundering herd): synchronized misses on expiry flooding the database",
+    "Request coalescing (single flight) as the most effective stampede fix",
+    "Cache warming presupposes TTL-based expiry and is useless with write-invalidation",
+    "Staggered/jittered TTLs or probabilistic early refresh to prevent synchronized mass expiry",
+    "Invalidate-on-write to make updates visible immediately under cache-aside",
+    "Matching consistency strategy to data: accept eventual consistency where staleness is harmless",
+    "Hot key failure mode: one key concentrates load on a single cache shard",
+    "Hot key mitigations: replicating the key across nodes, in-process fallback copies, and rate limiting",
+    "What not to cache: rarely-read or fast-changing data pollutes the cache and tanks hit rate (healthy ~80%+)",
+    "Cache outage resilience: circuit breakers, load shedding, graceful degradation when the cache tier fails",
+    "Interview strategy: quantify the bottleneck before proposing a cache",
+    "Interview strategy: a cache proposal is incomplete until staleness handling and failure modes are addressed",
+    "Capacity rule of thumb: a single Redis node handles on the order of 100k+ ops/sec"
+  ],
+  "question_count": 32,
+  "questions": [
+    {
+      "id": "caching-01",
+      "type": "scenario",
+      "concept": "Why cache: memory vs disk latency gap (~1ms Redis vs ~30-50ms database query)",
+      "question": "A SaaS analytics dashboard needs a p50 under 10ms for a workspace-settings lookup that currently takes 40ms from Postgres. One engineer proposes adding two read replicas; another proposes putting the lookup behind Redis. Which approach fits better, and why?",
+      "answer": "Redis. Replicas add capacity, but every query still pays the disk-backed query cost, so 40ms stays roughly 40ms; an in-memory read returns in about a millisecond, which is the only way to hit a sub-10ms target."
+    },
+    {
+      "id": "caching-02",
+      "type": "scenario",
+      "concept": "Caching to offload repetitive reads from an overloaded database",
+      "question": "An electronics e-commerce site's database sits at 85% CPU during evening peaks. Query logs show the same few thousand product-detail queries repeating constantly, and writes are a tiny fraction of traffic. What should the team change?",
+      "answer": "Put the product-detail reads behind a cache so repeated identical queries are served from memory instead of re-hitting the database. Read-heavy, repetitive access to slowly-changing data is exactly the workload caching exists to absorb."
+    },
+    {
+      "id": "caching-03",
+      "type": "scenario",
+      "concept": "External shared cache (Redis/Memcached) shared across all app servers vs per-server local caches",
+      "question": "A ride-hailing platform runs 12 API servers, each with its own local cache of driver profiles. The hit rate is poor, the same profiles are duplicated in 12 places, and two servers sometimes return different versions of the same driver. What structural change fixes all three symptoms?",
+      "answer": "Replace the per-server caches with one shared external cache like Redis. All servers read the same copy, so duplication disappears, any server's fetch warms the cache for everyone (raising the hit rate), and all servers see one consistent version."
+    },
+    {
+      "id": "caching-04",
+      "type": "scenario",
+      "concept": "CDN edge caching to cut geographic latency for static media (~250-300ms origin vs ~20-40ms edge)",
+      "question": "A mobile game serves its asset bundles from a single origin server in Virginia. Players in Australia wait around 300ms per asset request and complain about load times; the assets only change on releases. What should the team add, and what improvement should they expect?",
+      "answer": "Serve the assets through a CDN. Edge servers near the players cut round trips from roughly 250-300ms to 20-40ms, and rarely-changing static files are the ideal CDN payload."
+    },
+    {
+      "id": "caching-05",
+      "type": "scenario",
+      "concept": "CDNs can cache public, non-personalized API responses, not just static assets",
+      "question": "A ticketing platform's anonymous 'upcoming events' JSON endpoint returns identical output for every visitor and accounts for 90% of traffic. An engineer objects that 'the CDN is only for images and JavaScript.' Are they right, and what should the team do?",
+      "answer": "They're wrong — a CDN can cache any public, non-personalized HTTP response, JSON included. Put the endpoint behind the CDN with a short TTL and most of that traffic never reaches the origin."
+    },
+    {
+      "id": "caching-06",
+      "type": "scenario",
+      "concept": "Client-side caching trade-off: backend has weak control over invalidation and staleness",
+      "question": "A smart-home app stores device configuration in the phone's local storage so screens render instantly. Support agents keep changing settings server-side, but some users see the old configuration for days. What is the inherent limitation here, and how should it be mitigated?",
+      "answer": "The backend cannot reach into client-side caches to invalidate them, so staleness is hard to control. Mitigate with expiry or version checks on the cached data (for example, a freshness check on app open), while accepting that client caches trade backend control for speed."
+    },
+    {
+      "id": "caching-07",
+      "type": "scenario",
+      "concept": "In-process caching for small rarely-changing data (feature flags, config) removes the network hop entirely",
+      "question": "A payments API checks a feature flag in Redis on every request, adding a ~1ms network round trip millions of times a day. The flags change maybe once a week. What should the team change, and why?",
+      "answer": "Cache the flags in-process with a periodic refresh. Local memory reads take microseconds because there is no network hop at all, and tiny, rarely-changing config data is the textbook use case for in-process caching."
+    },
+    {
+      "id": "caching-08",
+      "type": "scenario",
+      "concept": "In-process cache limitation: not shared across instances, causing divergent views",
+      "question": "A gaming company caches its global leaderboard in-process on each of its 20 game servers. Players comparing screens see different top-10 lists depending on which server they hit. What is going wrong?",
+      "answer": "Each server holds its own private copy refreshed at different moments — in-process caches are not shared across instances, so they diverge. Data that must look identical to everyone belongs in a shared external cache."
+    },
+    {
+      "id": "caching-09",
+      "type": "scenario",
+      "concept": "Cache-aside (lazy loading) keeps the cache lean by populating only on demand",
+      "question": "An online bookstore plans to bulk-load its entire 50-million-row catalog into Redis at startup 'so the cache is always warm.' Only about 2% of titles are viewed in any given week, and the load blows past the cluster's memory. What approach should they use instead?",
+      "answer": "Cache-aside lazy loading: populate a key only when a request actually misses. The cache then holds just the working set — the roughly 2% of titles actually being read — instead of the entire catalog."
+    },
+    {
+      "id": "caching-10",
+      "type": "true_false",
+      "concept": "Cache-aside miss penalty: a miss is slower than having no cache at all",
+      "question": "In a cache-aside setup, a request that misses the cache is slightly slower than the same request would be in a system with no cache at all.",
+      "answer": "True — a miss pays for the failed cache lookup and then the full database read, so the miss path is strictly slower; the pattern only wins because hits vastly outnumber misses."
+    },
+    {
+      "id": "caching-11",
+      "type": "mcq2",
+      "concept": "Write-through: synchronous dual write gives fresh reads at the cost of slower writes",
+      "question": "A brokerage's positions page must never show a stale balance after a trade is recorded, and the firm can tolerate slightly slower writes. Which write strategy fits?",
+      "options": [
+        "Write-through: update the cache and the database synchronously on every write",
+        "Write-behind: update the cache immediately and flush to the database asynchronously"
+      ],
+      "answer": "Write-through: update the cache and the database synchronously on every write — completing both before acknowledging keeps the cache consistent with the database so reads are always fresh, whereas write-behind leaves a window of unflushed, potentially lost data."
+    },
+    {
+      "id": "caching-12",
+      "type": "scenario",
+      "concept": "Write-through dual-write failure: partial failure leaves cache and database inconsistent",
+      "question": "A food-delivery app writes order status to its cache and its database synchronously. During a database hiccup, some orders showed as 'confirmed' in the app but never existed in the database. What went wrong?",
+      "answer": "A dual-write partial failure: the order was written to the cache but the database write failed, and with no transaction spanning both systems nothing rolled the cache entry back. This inconsistency window is the classic weakness of synchronous dual writes; ordering the database write first (and invalidating rather than updating the cache) narrows it."
+    },
+    {
+      "id": "caching-13",
+      "type": "scenario",
+      "concept": "Write-behind (write-back) for high write throughput when eventual consistency is acceptable",
+      "question": "A fitness-wearable platform ingests hundreds of thousands of step-count updates per second and is crushing its database with tiny writes. Dashboards can lag by a minute without anyone caring. Which caching write strategy fits, and why?",
+      "answer": "Write-behind (write-back): accept writes into the cache and flush them to the database asynchronously in batches. It turns a flood of tiny writes into efficient batches, and the data's tolerance for lag makes the eventual consistency acceptable."
+    },
+    {
+      "id": "caching-14",
+      "type": "scenario",
+      "concept": "Write-behind risk: buffered unflushed writes are lost if the cache crashes",
+      "question": "An ad-analytics service uses a write-back cache in front of its data warehouse. After a cache node crashed, the last several minutes of click data were simply gone. Why did this happen, and what is the lesson?",
+      "answer": "Write-behind buffers writes in cache memory before flushing, so a crash destroys everything not yet flushed. Use it only where losing a window of data is tolerable, or add replication or persistence to the cache tier."
+    },
+    {
+      "id": "caching-15",
+      "type": "scenario",
+      "concept": "Read-through is rarely worth proposing outside CDNs (library complexity vs cache-aside)",
+      "question": "An architect at a recipe-sharing startup insists on wiring a read-through plugin into the cache tier so 'the application never talks to the database for reads.' What is the pushback?",
+      "answer": "Read-through requires specialized library or plugin support and buys almost nothing over plain cache-aside, which the app can implement in a few lines. Outside a CDN — the one canonical read-through system — there is rarely a reason to take on that complexity."
+    },
+    {
+      "id": "caching-16",
+      "type": "scenario",
+      "concept": "LRU as the safe default eviction policy that adapts to shifting access patterns",
+      "question": "A podcast app's cache is at capacity. Listening is dominated by whatever episodes came out this week, and the popular set shifts continuously as new shows drop. Which eviction policy should the team pick, and why?",
+      "answer": "LRU. It evicts whatever has not been touched recently, so the cache automatically tracks the shifting weekly working set — which is why it is the safe default for most workloads."
+    },
+    {
+      "id": "caching-17",
+      "type": "scenario",
+      "concept": "LFU for durably popular items and resistance to one-off scan pollution",
+      "question": "A video-streaming service's small set of blockbuster titles stays hot for months, but a nightly catalog-scanning job touches millions of cold titles and keeps flushing the blockbusters out of the LRU cache. What policy change helps, and why?",
+      "answer": "Switch to LFU (typically an approximate implementation). Frequency-based eviction protects the durably popular titles because a single scan touch cannot outrank months of accumulated hits, unlike recency-based LRU."
+    },
+    {
+      "id": "caching-18",
+      "type": "scenario",
+      "concept": "FIFO's flaw: evicts by insertion age and throws out still-hot items",
+      "question": "A news aggregator picked FIFO eviction 'because it's simple.' Its most-read evergreen explainer articles — cached long ago and still heavily read — keep vanishing from the cache and hammering the database. What is wrong?",
+      "answer": "FIFO evicts strictly by insertion order and ignores usage, so the oldest entries get evicted even while they are the hottest. Recency- and frequency-aware policies like LRU and LFU exist precisely to avoid this."
+    },
+    {
+      "id": "caching-19",
+      "type": "scenario",
+      "concept": "TTL bounds staleness and composes with size-based eviction policies",
+      "question": "A weather app caches city forecasts in Redis with no expiry, evicting only under memory pressure. Users in low-traffic cities end up seeing day-old forecasts. What is the minimal fix?",
+      "answer": "Attach a TTL to each forecast entry so it expires after a bounded window and the next read fetches fresh data. TTL is the staleness bound; size-based policies like LRU manage memory, not freshness, so the two are combined."
+    },
+    {
+      "id": "caching-20",
+      "type": "scenario",
+      "concept": "Cache stampede (thundering herd): synchronized misses on expiry flooding the database",
+      "question": "A social app caches its homepage feed with a 60-second TTL. Monitoring shows database QPS spiking about 100x for a moment every minute — exactly when the entry expires — then dropping back. What is happening?",
+      "answer": "A cache stampede (thundering herd): when the popular entry expires, every concurrent request misses at once and each one independently hits the database to rebuild the same value."
+    },
+    {
+      "id": "caching-21",
+      "type": "scenario",
+      "concept": "Request coalescing (single flight) as the most effective stampede fix",
+      "question": "A live sports-scores site knows its match-page cache entry expires under heavy concurrency, and thousands of simultaneous misses pile onto the database each time. The team is debating mitigations. What is the most effective mechanism?",
+      "answer": "Request coalescing (single flight): let exactly one request rebuild the entry while all the others wait for its result. The database sees one rebuild instead of thousands, no matter how high the concurrency."
+    },
+    {
+      "id": "caching-22",
+      "type": "scenario",
+      "concept": "Cache warming presupposes TTL-based expiry and is useless with write-invalidation",
+      "question": "A job board deletes cache entries the moment a listing is edited and uses no TTLs. An engineer proposes a background job that 're-warms popular keys shortly before they expire' to smooth database load. Why doesn't the proposal fit?",
+      "answer": "There is no expiry to warm ahead of — with write-invalidation, entries die at unpredictable moments when writes happen, not on a schedule. Warming ahead of expiry only makes sense when entries expire on TTLs."
+    },
+    {
+      "id": "caching-23",
+      "type": "scenario",
+      "concept": "Staggered/jittered TTLs or probabilistic early refresh to prevent synchronized mass expiry",
+      "question": "After every deploy, a flight-search site warms 10,000 route keys, all with exactly one-hour TTLs. Every hour on the hour, database load spikes hard. What should the team change?",
+      "answer": "Stagger the TTLs — add random jitter, or use probabilistic early refresh — so keys expire spread over time. Identical TTLs set at the same moment recreate a synchronized mass-miss spike every hour."
+    },
+    {
+      "id": "caching-24",
+      "type": "scenario",
+      "concept": "Invalidate-on-write to make updates visible immediately under cache-aside",
+      "question": "On a professional networking app, users who upload a new profile photo still appear with the old one to everyone else for up to ten minutes. Profiles sit in a cache-aside layer with a 10-minute TTL. What change makes updates visible immediately while keeping the cache?",
+      "answer": "Delete the profile's cache key as part of the write path (invalidate on write). The next read misses and repopulates with the fresh value, so staleness no longer persists until the TTL runs out."
+    },
+    {
+      "id": "caching-25",
+      "type": "scenario",
+      "concept": "Matching consistency strategy to data: accept eventual consistency where staleness is harmless",
+      "question": "A short-video app's product manager demands that like counts be perfectly up-to-date on every screen, which would force invalidating the counter cache on every single like. What should engineering push back with?",
+      "answer": "Like counts do not need strong consistency — a few seconds of staleness harms no one. Cache them with a short TTL and accept eventual consistency; per-like invalidation would destroy the cache's value to provide a guarantee the product doesn't need."
+    },
+    {
+      "id": "caching-26",
+      "type": "scenario",
+      "concept": "Hot key failure mode: one key concentrates load on a single cache shard",
+      "question": "A microblogging service's Redis cluster shows one node pinned at 100% CPU while the others sit idle. Nearly all traffic on that node targets a single celebrity's profile key. What is this failure mode?",
+      "answer": "A hot key: partitioning maps each key to exactly one node, so a single wildly popular key concentrates its entire load on one shard no matter how many nodes the cluster has."
+    },
+    {
+      "id": "caching-27",
+      "type": "scenario",
+      "concept": "Hot key mitigations: replicating the key across nodes, in-process fallback copies, and rate limiting",
+      "question": "A live-shopping platform's flash-sale item page drives millions of reads per second against one cache key, saturating the node that owns it. What mitigations should the team apply?",
+      "answer": "Replicate the hot key — store the same value under multiple copies that land on different nodes and spread reads across them — and/or keep an in-process copy on each app server so most reads never touch the cache tier at all. Rate limiting is the backstop if the spread-out load is still too much."
+    },
+    {
+      "id": "caching-28",
+      "type": "scenario",
+      "concept": "What not to cache: rarely-read or fast-changing data pollutes the cache and tanks hit rate (healthy ~80%+)",
+      "question": "A project-management SaaS decreed 'cache every endpoint.' Months later, cache memory has ballooned, the hit rate sits around 30%, and latency has barely improved. An audit shows they cache rarely-requested audit-log pages and task counters that change every second. What is the lesson?",
+      "answer": "Cache only data that is read often and changes rarely. Rarely-read entries burn memory without producing hits and volatile entries are stale on arrival, so both pollute the cache — exactly what a ~30% hit rate (healthy is roughly 80%+) is signaling."
+    },
+    {
+      "id": "caching-29",
+      "type": "scenario",
+      "concept": "Cache outage resilience: circuit breakers, load shedding, graceful degradation when the cache tier fails",
+      "question": "A music-streaming service's Redis cluster failed, the full read load instantly landed on the database, and the database collapsed, turning a cache outage into a total outage. What should have been designed in beforehand?",
+      "answer": "A plan for losing the cache: circuit breakers and load shedding so the database only receives what it can survive, plus graceful degradation (and possibly a small in-process fallback cache) for the rest. A cache absorbing most traffic is an availability dependency, not just an optimization."
+    },
+    {
+      "id": "caching-30",
+      "type": "scenario",
+      "concept": "Interview strategy: quantify the bottleneck before proposing a cache",
+      "question": "In a mock system design interview, a candidate drops Redis boxes onto the diagram before discussing traffic volumes or requirements. The interviewer looks unimpressed. What feedback should the candidate get?",
+      "answer": "Establish the bottleneck first — quantify the read load or a specific query's latency — and then introduce caching as the targeted fix. Proposing a cache before demonstrating the need reads as pattern-matching rather than engineering judgment."
+    },
+    {
+      "id": "caching-31",
+      "type": "scenario",
+      "concept": "Interview strategy: a cache proposal is incomplete until staleness handling and failure modes are addressed",
+      "question": "In a system design interview, a candidate adds a cache-aside Redis layer with LRU eviction and a 5-minute TTL for a product catalog, then immediately moves on to the next component. The interviewer interjects: 'Anything else you want to say about that cache?' What is the interviewer fishing for?",
+      "answer": "The downsides: how updates are handled (invalidate on write, or explicitly accept TTL-bounded staleness) and what happens when the cache tier fails (circuit breakers so the database is not crushed by the fallback load). A cache proposal is incomplete until its consistency story and failure modes are addressed proactively."
+    },
+    {
+      "id": "caching-32",
+      "type": "scenario",
+      "concept": "Capacity rule of thumb: a single Redis node handles on the order of 100k+ ops/sec",
+      "question": "A dating app expects 250,000 cache reads per second at peak and plans to serve them all from a single Redis node. Is the plan sound?",
+      "answer": "No — a single Redis node handles on the order of 100k+ operations per second, so 250k/sec calls for a cluster of roughly three or more nodes (or read replicas), with headroom for spikes."
+    }
+  ]
+}

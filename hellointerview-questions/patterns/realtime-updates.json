@@ -1,0 +1,294 @@
+{
+  "section": "patterns",
+  "subsection": "Real-time Updates",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/realtime-updates",
+  "concepts": [
+    "HTTP request-response cannot server-initiate updates",
+    "Two-hop decomposition of real-time delivery",
+    "TCP vs UDP for latency-sensitive streams",
+    "Connection establishment cost (DNS/TCP/TLS handshakes)",
+    "Polling latency bounded by the polling interval",
+    "Right-sizing: polling as the baseline choice",
+    "Polling load scales with users x frequency, not events",
+    "Long polling mechanism",
+    "Long polling vs intermediary idle timeouts",
+    "Long polling degrades at high update frequency",
+    "SSE fit for one-way server-to-client streaming",
+    "SSE auto-reconnect with Last-Event-ID",
+    "SSE one-way limit doesn't block client sends",
+    "Intermediary buffering breaks SSE streams",
+    "HTTP/1.1 per-host connection limit vs HTTP/2",
+    "WebSocket HTTP Upgrade handshake and infra support",
+    "WebSockets for high-frequency bidirectional traffic",
+    "WebSocket statefulness vs autoscaling/deploys",
+    "Thin connection gateway tier isolates statefulness",
+    "Long-lived connections don't rebalance after scale-out",
+    "WebRTC peer-to-peer media transport",
+    "STUN/TURN and NAT traversal",
+    "Recognizing when real-time infra is unnecessary",
+    "Second hop under polling: stateless DB reads",
+    "Consistent hashing to route to stateful session owners",
+    "Consistent hashing minimizes remapping on ring changes",
+    "Consistent hashing vs pub/sub selection criterion",
+    "Pub/sub decouples publishers from connection servers",
+    "Pub/sub broker as central scaling bottleneck",
+    "Push channels are at-most-once, not guaranteed delivery",
+    "Reconnect storms: exponential backoff with jitter",
+    "Cursor-based catch-up from durable source of truth",
+    "Heartbeats to detect half-open dead connections",
+    "Celebrity fan-out via per-server subscriptions",
+    "Single-authority sequence numbers for ordering"
+  ],
+  "question_count": 35,
+  "questions": [
+    {
+      "id": "realtime-updates-01",
+      "type": "scenario",
+      "concept": "HTTP request-response cannot server-initiate updates",
+      "question": "A recipe-sharing site wants new comments to appear under a recipe the moment they are posted. A junior engineer asks why the API server can't simply 'send an HTTP response' to every browser currently viewing the recipe whenever a comment lands. What is the flaw in that plan?",
+      "answer": "HTTP is strictly client-initiated request/response — the server has no way to reach a browser that hasn't asked. Real-time delivery requires either clients repeatedly asking (polling) or a connection deliberately held open (long polling, SSE, WebSockets) that the server can write into."
+    },
+    {
+      "id": "realtime-updates-02",
+      "type": "scenario",
+      "concept": "Two-hop decomposition of real-time delivery",
+      "question": "In a mock interview for a messaging app, a candidate picks WebSockets and moves on. The interviewer asks: 'Alice is connected to server 1 and Bob to server 7 — walk me through how Alice's message reaches Bob's phone.' The candidate freezes. What half of the real-time problem did they skip?",
+      "answer": "The second hop. Choosing WebSockets only solves client-to-server delivery; they never addressed how an update travels from its source to the specific server holding the recipient's connection — which needs pub/sub or consistent-hash routing."
+    },
+    {
+      "id": "realtime-updates-03",
+      "type": "scenario",
+      "concept": "TCP vs UDP for latency-sensitive streams",
+      "question": "A studio's fast-paced multiplayer shooter streams player positions 30 times per second over a TCP-based channel. Players on lossy Wi-Fi report the game freezing briefly, then everyone 'teleporting' as a burst of updates catches up. What transport property is causing this?",
+      "answer": "TCP's ordered, reliable delivery: one lost packet blocks everything behind it until retransmission, then delivers a burst of stale positions. For data where fresh beats complete, UDP is the right layer-4 choice — drop the lost update and keep moving."
+    },
+    {
+      "id": "realtime-updates-04",
+      "type": "scenario",
+      "concept": "Connection establishment cost (DNS/TCP/TLS handshakes)",
+      "question": "A mobile trading app polls a quotes endpoint every 2 seconds, and profiling shows each poll opens a brand-new HTTPS connection. Per-poll latency is several times the server's 40 ms processing time, and battery drain is high. What is the app paying for on every request?",
+      "answer": "Full connection setup on each poll — DNS resolution, the TCP handshake, and the TLS handshake add multiple round trips before any data flows. Reuse persistent connections (keep-alive) or switch to a held-open streaming approach."
+    },
+    {
+      "id": "realtime-updates-05",
+      "type": "scenario",
+      "concept": "Polling latency bounded by the polling interval",
+      "question": "A concert-ticketing ops dashboard polls seat-inventory every 30 seconds. Ops complains the numbers are 'up to 30 seconds stale, usually around 15.' Engineers confirm the backend answers in 50 ms. Why is the staleness in exactly that band?",
+      "answer": "Polling freshness is bounded by the interval, not backend speed: worst case is one full interval, average is about half. The only fixes are a shorter interval or a push-based mechanism."
+    },
+    {
+      "id": "realtime-updates-06",
+      "type": "scenario",
+      "concept": "Right-sizing: polling as the baseline choice",
+      "question": "An internal SaaS admin panel used by about 200 employees shows background-job statuses, and updates arriving within a few seconds are perfectly acceptable. An engineer proposes building a WebSocket gateway tier backed by Redis pub/sub. What should the team do instead, and why?",
+      "answer": "Poll every couple of seconds. The latency tolerance is seconds and the scale is tiny, so stateful persistent-connection infrastructure is pure complexity tax — polling is stateless, trivial to operate, and fully meets the requirement."
+    },
+    {
+      "id": "realtime-updates-07",
+      "type": "scenario",
+      "concept": "Polling load scales with users x frequency, not events",
+      "question": "An e-commerce platform's order-tracking page polls every second. With 2 million shoppers watching packages, 99.9% of responses say 'no change' and the server fleet is buckling. What is the structural problem with this design?",
+      "answer": "Polling cost scales with users times frequency regardless of how often anything actually changes, so nearly all capacity is spent producing empty responses. Move to long polling or SSE so server work scales with actual events instead."
+    },
+    {
+      "id": "realtime-updates-08",
+      "type": "scenario",
+      "concept": "Long polling mechanism",
+      "question": "An auction site wants bidders to learn they've been outbid within about a second. Outbids on any single item are sporadic, and the stack sits behind an aging corporate proxy that only reliably handles ordinary HTTP request/response. Which delivery approach fits, and how does it work?",
+      "answer": "Long polling: the client sends a normal request, the server parks it until an outbid happens or a timeout fires, responds, and the client immediately re-requests. It's near-instant for sporadic events and rides plain HTTP, so the legacy proxy never notices anything unusual."
+    },
+    {
+      "id": "realtime-updates-09",
+      "type": "scenario",
+      "concept": "Long polling vs intermediary idle timeouts",
+      "question": "A team implements long polling and holds each request open for 5 minutes to 'reduce request churn.' In production, clients sporadically receive connection resets around the 60-second mark. What did they miss?",
+      "answer": "Intermediaries — load balancers and proxies — enforce idle timeouts, commonly 30-60 seconds, and kill requests held longer. Cap the hold time safely below the shortest timeout in the path and let the client re-poll."
+    },
+    {
+      "id": "realtime-updates-10",
+      "type": "scenario",
+      "concept": "Long polling degrades at high update frequency",
+      "question": "A cricket live-scores app uses long polling. During overs with several ball-by-ball updates per second, clients fall behind and request volume explodes. Why does long polling specifically break down here?",
+      "answer": "Each delivered message costs an entire request/response cycle, so at high frequency long polling degrades into rapid-fire polling with all its overhead. High-rate streams belong on SSE or WebSockets, which push many events over one held connection."
+    },
+    {
+      "id": "realtime-updates-11",
+      "type": "scenario",
+      "concept": "SSE fit for one-way server-to-client streaming",
+      "question": "An AI writing tool streams generated drafts to the browser word-by-word, while users only send input through occasional form submissions. The team is debating a WebSocket build-out. What is the better-fitting protocol, and why?",
+      "answer": "Server-Sent Events: one long-lived HTTP response streaming events server-to-client is exactly the token-streaming shape. Traffic is essentially one-directional, so WebSockets' full-duplex machinery and stateful infrastructure buy nothing here."
+    },
+    {
+      "id": "realtime-updates-12",
+      "type": "scenario",
+      "concept": "SSE auto-reconnect with Last-Event-ID",
+      "question": "A news site's election liveblog runs on SSE. Mobile readers on trains drop the connection often; the browser reconnects on its own, but posts published during the gap never appear. Which built-in SSE capability did the team leave unused?",
+      "answer": "Event IDs with Last-Event-ID resume. If the server stamps each event with an ID, EventSource automatically sends the last one it received on reconnect, and the server can replay everything after it — no missed posts."
+    },
+    {
+      "id": "realtime-updates-13",
+      "type": "scenario",
+      "concept": "SSE one-way limit doesn't block client sends",
+      "question": "While evaluating protocols for a customer-support chat widget, a tech lead vetoes SSE: 'Customers have to send messages too, and SSE is one-way, so it can't work.' Is the veto sound?",
+      "answer": "No. SSE's one-way limit only covers the server-to-client stream; customer messages go up as ordinary HTTP POSTs. SSE-down plus HTTP-up is a legitimate, simpler design — WebSockets only earn their keep if upstream traffic is very frequent."
+    },
+    {
+      "id": "realtime-updates-14",
+      "type": "scenario",
+      "concept": "Intermediary buffering breaks SSE streams",
+      "question": "A fitness platform streams live class stats over SSE. It works perfectly against a dev laptop, but in production events arrive in delayed clumps every ten seconds or so instead of flowing continuously. What is the likely culprit?",
+      "answer": "An intermediary — reverse proxy or CDN — is buffering the streamed response and flushing it in chunks. Disable response buffering on the streaming path and send periodic heartbeat comments so idle detection doesn't kill the connection."
+    },
+    {
+      "id": "realtime-updates-15",
+      "type": "scenario",
+      "concept": "HTTP/1.1 per-host connection limit vs HTTP/2",
+      "question": "An analytics SaaS opens a separate SSE stream for every dashboard widget. Customers with 8-widget dashboards served over HTTP/1.1 report that images stop loading and other API calls hang. What limit did the team hit, and what are the fixes?",
+      "answer": "Browsers cap roughly six concurrent HTTP/1.1 connections per host, and the SSE streams exhausted the pool, starving everything else. Multiplex all widgets over a single stream, or serve the site over HTTP/2 where streams share one connection."
+    },
+    {
+      "id": "realtime-updates-16",
+      "type": "scenario",
+      "concept": "WebSocket HTTP Upgrade handshake and infra support",
+      "question": "A ride-hailing company moves its rider traffic behind a new layer-7 load balancer. Ordinary API calls and pages work fine, but the realtime WebSocket channel now fails instantly at connect time. What is the most likely cause?",
+      "answer": "The load balancer isn't handling the HTTP Upgrade handshake. A WebSocket starts life as an HTTP request that gets upgraded into a persistent full-duplex TCP connection, and every hop in the path must support and forward that upgrade."
+    },
+    {
+      "id": "realtime-updates-17",
+      "type": "scenario",
+      "concept": "WebSockets for high-frequency bidirectional traffic",
+      "question": "A collaborative whiteboard broadcasts each user's pen strokes to everyone in the room while simultaneously receiving theirs — dozens of small messages per second in both directions per user. Which client-server protocol fits, and what property makes it the fit?",
+      "answer": "WebSockets. A persistent full-duplex connection with minimal per-message framing is built precisely for high-frequency two-way traffic; polling variants would burn a request per message and SSE only covers the downstream half."
+    },
+    {
+      "id": "realtime-updates-18",
+      "type": "scenario",
+      "concept": "WebSocket statefulness vs autoscaling/deploys",
+      "question": "A mobile game's chat runs on a WebSocket tier autoscaled on CPU exactly like the rest of the stateless fleet. Scale-in events keep booting thousands of players mid-conversation. Why doesn't this tier behave like the others?",
+      "answer": "WebSocket servers are stateful: each instance physically holds live connections, so terminating one severs every user on it. The tier needs connection draining, conservative scale-in, and reconnect handling — it cannot be treated as interchangeable stateless capacity."
+    },
+    {
+      "id": "realtime-updates-19",
+      "type": "scenario",
+      "concept": "Thin connection gateway tier isolates statefulness",
+      "question": "A B2B SaaS embedded its WebSocket handling inside the main monolith. Now every deploy of any feature — billing, search, anything — drops all realtime connections and triggers reconnect churn. What architectural change limits the blast radius?",
+      "answer": "Split out a thin connection/gateway tier whose only job is terminating sockets and relaying messages to stateless backend services. Business logic then deploys freely without ever touching live connections, confining statefulness to a small, rarely-changed layer."
+    },
+    {
+      "id": "realtime-updates-20",
+      "type": "scenario",
+      "concept": "Long-lived connections don't rebalance after scale-out",
+      "question": "A chat service adds three WebSocket servers to its fleet during a traffic surge. Hours later the new machines sit nearly idle while the original servers stay saturated, even though the load balancer confirms it is spreading incoming connections evenly. Why hasn't the load evened out, and what fixes it?",
+      "answer": "Persistent connections are balanced only once — at connect time — and existing sockets never migrate, so pre-surge load stays pinned to the old servers no matter how new connects are distributed. Use least-connections balancing and actively rebalance by capping connection lifetimes or asking some clients on hot servers to reconnect."
+    },
+    {
+      "id": "realtime-updates-21",
+      "type": "scenario",
+      "concept": "WebRTC peer-to-peer media transport",
+      "question": "A tutoring startup built 1:1 video by capturing frames and relaying them through its API servers over WebSockets. Video is laggy and server bandwidth bills are exploding. What should they use instead, and what changes?",
+      "answer": "WebRTC. Media flows peer-to-peer over UDP directly between the two participants, so the extra relay hop's latency disappears and the servers shrink to lightweight signaling plus STUN/TURN — the bandwidth bill largely evaporates."
+    },
+    {
+      "id": "realtime-updates-22",
+      "type": "scenario",
+      "concept": "STUN/TURN and NAT traversal",
+      "question": "The same startup's WebRTC calls connect flawlessly between two laptops on the office LAN but fail for most customer pairs on home and mobile networks. What part of a WebRTC deployment is missing?",
+      "answer": "NAT traversal infrastructure. Peers behind home/mobile NATs can't address each other directly: they need STUN to discover their public address/port mapping and TURN as a relayed fallback when a direct path can't be punched."
+    },
+    {
+      "id": "realtime-updates-23",
+      "type": "scenario",
+      "concept": "Recognizing when real-time infra is unnecessary",
+      "question": "An IoT fleet-management product maintains an always-on WebSocket subsystem — heartbeats, reconnect logic, sticky routing — to display sensor readings that devices report once per hour. The subsystem generates a steady stream of on-call pages. What should the team change?",
+      "answer": "Remove the realtime plumbing entirely. Data that changes hourly with no sub-second requirement is perfectly served by polling or refresh-on-load; persistent connections here are all operational cost and no product value."
+    },
+    {
+      "id": "realtime-updates-24",
+      "type": "scenario",
+      "concept": "Second hop under polling: stateless DB reads",
+      "question": "An e-learning platform adds a class leaderboard that clients poll every 5 seconds. An engineer insists they must also add a pub/sub bus 'so the servers receive score updates.' What is he missing about how a polling design works server-side?",
+      "answer": "With client pull there is no push problem to solve: any stateless server answers a poll by reading current standings from the database. No server needs updates routed to it — that operational simplicity is exactly what polling buys you."
+    },
+    {
+      "id": "realtime-updates-25",
+      "type": "scenario",
+      "concept": "Consistent hashing to route to stateful session owners",
+      "question": "A collaborative slide-deck editor keeps each open deck's live state — operation log, cursors, presence — in memory on one server, but users connect from anywhere. How should the system decide which server owns deck #4831 so all of its connections and updates converge on the same machine?",
+      "answer": "Consistent-hash the deck ID onto the server ring: any node can deterministically compute the owner and route connections or updates there, and a coordination service like ZooKeeper or etcd tracks ring membership as servers join and leave."
+    },
+    {
+      "id": "realtime-updates-26",
+      "type": "scenario",
+      "concept": "Consistent hashing minimizes remapping on ring changes",
+      "question": "A document-editing platform assigns each document's connections to an owning server by computing hash(docId) mod N across its N connection servers. When a tenth server is added to relieve load, nearly every open document abruptly maps to a different owner, dropping sessions platform-wide and forcing mass state migration. What routing change confines the damage of future capacity changes?",
+      "answer": "Replace mod-N with consistent hashing: servers and keys sit on a hash ring, so adding or removing a node remaps only the roughly 1/N of documents adjacent to it instead of almost all of them. Capacity changes then disturb a sliver of sessions rather than the whole platform."
+    },
+    {
+      "id": "realtime-updates-27",
+      "type": "mcq2",
+      "concept": "Consistent hashing vs pub/sub selection criterion",
+      "question": "A team is choosing the second-hop architecture for pushing updates. For which workload is a ring of stateful servers with consistent hashing a better fit than a pub/sub broker?",
+      "options": [
+        "A collaborative 3D-modeling tool where each active project holds heavy in-memory session state that every participant's updates must flow through",
+        "A price-alert service fanning independent notifications out to whichever servers hold subscribers' connections"
+      ],
+      "answer": "A collaborative 3D-modeling tool where each active project holds heavy in-memory session state that every participant's updates must flow through — consistent hashing co-locates a session's state and its connections on one deterministic owner, while stateless fan-out of independent messages is exactly what pub/sub is for."
+    },
+    {
+      "id": "realtime-updates-28",
+      "type": "scenario",
+      "concept": "Pub/sub decouples publishers from connection servers",
+      "question": "In a chat app, Alice's message lands on whichever API server happened to take her POST, but Bob's WebSocket lives on a different machine and the sender has no idea which one. Without building and maintaining a connection registry, how can the message find Bob's server?",
+      "answer": "Put a pub/sub broker in the middle: each connection server subscribes to a channel per connected user, and the sender just publishes to Bob's channel. The broker delivers to whichever server currently holds him — publishers never need to know the connection topology."
+    },
+    {
+      "id": "realtime-updates-29",
+      "type": "scenario",
+      "concept": "Pub/sub broker as central scaling bottleneck",
+      "question": "A social app's single Redis pub/sub node was fine at launch, but as connection servers and channels multiplied it is now pegging CPU and network. What does this reveal about the pub/sub second hop, and what is the remedy?",
+      "answer": "The broker is a centralized chokepoint — decoupling publishers from subscribers concentrates all routing traffic in one place that must be scaled deliberately. Shard channels across a Redis cluster or partition topics across multiple brokers."
+    },
+    {
+      "id": "realtime-updates-30",
+      "type": "true_false",
+      "concept": "Push channels are at-most-once, not guaranteed delivery",
+      "question": "For a product delivering updates over WebSockets fed by Redis pub/sub, the realtime pipeline by itself guarantees that every client eventually receives every message.",
+      "answer": "False — Redis pub/sub is fire-and-forget at-most-once, so anything published while a subscriber or client is disconnected is simply gone; the push path must be treated as a best-effort optimization with a durable store as the source of truth for catch-up."
+    },
+    {
+      "id": "realtime-updates-31",
+      "type": "scenario",
+      "concept": "Reconnect storms: exponential backoff with jitter",
+      "question": "A fintech platform's WebSocket gateway node crashes and 400,000 clients all retry the instant they detect the drop, knocking over the remaining nodes — whose recovery triggers the identical stampede again. What client behavior breaks this loop?",
+      "answer": "Reconnect with exponential backoff plus jitter, so retries spread out over time instead of arriving as a synchronized wave. Pair it with server-side connection draining on planned restarts so mass disconnects rarely happen at once."
+    },
+    {
+      "id": "realtime-updates-32",
+      "type": "scenario",
+      "concept": "Cursor-based catch-up from durable source of truth",
+      "question": "Commuters using a team-messaging app lose connectivity in tunnels. On reconnect the WebSocket resumes fine, but messages sent during the outage are simply absent until users force-close the app. What is the standard design fix?",
+      "answer": "Give every message a per-conversation sequence ID and have the client report the last ID it saw on reconnect, back-filling the gap from the database. The socket is a delivery optimization; the durable store is the source of truth."
+    },
+    {
+      "id": "realtime-updates-33",
+      "type": "scenario",
+      "concept": "Heartbeats to detect half-open dead connections",
+      "question": "A ride-hailing dispatch service holds WebSockets to drivers. Drivers passing through dead zones drop off the network, yet the server's connection count climbs well past the number of active drivers and dispatches go to phantom sockets. Why doesn't the server notice, and what fixes it?",
+      "answer": "A peer that vanishes without closing leaves a half-open TCP connection that looks alive to the server indefinitely. Add application-level heartbeats — ping/pong with a timeout — and reap any connection that misses them."
+    },
+    {
+      "id": "realtime-updates-34",
+      "type": "scenario",
+      "concept": "Celebrity fan-out via per-server subscriptions",
+      "question": "On a live-streaming platform, a creator with 5 million followers goes live. The notification system publishes one broker message per follower channel and the pub/sub cluster melts. How should the fan-out be restructured?",
+      "answer": "Use one channel per creator: each connection server subscribes to it once and locally fans the event out to its own connected followers. Broker traffic then scales with the number of servers — a few hundred — instead of the number of followers."
+    },
+    {
+      "id": "realtime-updates-35",
+      "type": "scenario",
+      "concept": "Single-authority sequence numbers for ordering",
+      "question": "A sports-betting app pushes odds changes from several backend servers. Some users briefly see odds move to 3.5 and then 'back up' to 3.2, while others see the opposite order. Server clocks are NTP-synced. What is the fix?",
+      "answer": "Mint a monotonic sequence number per market from a single authority (a database counter or single partition owner) and have clients apply updates in sequence order, discarding stale ones. Synchronized wall clocks still drift by milliseconds and can never provide a total order across servers."
+    }
+  ]
+}

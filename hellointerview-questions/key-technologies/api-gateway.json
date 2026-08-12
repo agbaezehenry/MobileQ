@@ -1,0 +1,338 @@
+{
+  "section": "key-technologies",
+  "subsection": "API Gateway",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/api-gateway",
+  "concepts": [
+    "Single entry point hiding internal service topology from clients",
+    "Gateway enables incremental monolith decomposition without breaking clients",
+    "Request validation at the gateway rejects bad requests before backends",
+    "Request size validation middleware at the gateway",
+    "Centralized authentication middleware instead of per-service duplication",
+    "Rate limiting enforced at the gateway choke point",
+    "IP allowlisting/blocklisting middleware",
+    "SSL/TLS termination at the gateway",
+    "CORS handling as gateway middleware",
+    "Centralized traffic logging and monitoring middleware",
+    "Path-prefix routing rules mapping URLs to services",
+    "Routing on HTTP method, headers, and query parameters, not just path",
+    "Routing is the gateway's fundamental function; middleware is secondary",
+    "Protocol translation from client HTTP/JSON to internal gRPC",
+    "Response transformation into the client-facing contract",
+    "Full response caching for hot non-personalized endpoints",
+    "Never cache user-specific responses at the gateway",
+    "TTL versus event-based cache invalidation",
+    "Partial caching of the stable fragment of a response",
+    "Cache storage choice: per-instance in-memory versus shared distributed store like Redis",
+    "Statelessness makes gateway horizontal scaling safe",
+    "An external load balancer distributes traffic across the gateway instances themselves",
+    "The gateway performs internal load balancing across backend replicas",
+    "API gateway vs load balancer are different components",
+    "A combined gateway/load-balancer box is an acceptable interview simplification",
+    "Global distribution with regional gateways, GeoDNS, and config synchronization",
+    "Managed gateway trade-off: integration speed versus cost and control",
+    "Google Cloud Endpoints: GCP-native managed gateway with first-class gRPC support",
+    "Kong: open-source, NGINX-based, plugin-extensible",
+    "Tyk: GraphQL-native open-source gateway with built-in analytics and multi-datacenter support",
+    "Express Gateway: lightweight Node.js gateway for JavaScript stacks",
+    "Skip the gateway for a simple monolith with one client type",
+    "Interview heuristic: mention the gateway briefly and move on",
+    "Keep business logic out of the gateway",
+    "Service discovery integration for dynamic backend locations",
+    "Request timeout enforcement at the gateway",
+    "Response compression middleware",
+    "API versioning by routing versions to different backends",
+    "Gateways belong in nearly every product-design interview as the entry point"
+  ],
+  "question_count": 39,
+  "questions": [
+    {
+      "id": "api-gateway-01",
+      "type": "scenario",
+      "concept": "Single entry point hiding internal service topology from clients",
+      "question": "An e-commerce company's mobile app hardcodes the hostnames of twelve backend microservices. Every time the platform team splits a service or renames one, the mobile team must ship a new app release and wait for users to update. What architectural component fixes this, and what does it change?",
+      "answer": "Add an API gateway as the single public entry point. Clients call one stable address and the gateway routes internally, so the backend topology can change freely without any client ever knowing or needing a release."
+    },
+    {
+      "id": "api-gateway-02",
+      "type": "scenario",
+      "concept": "Gateway enables incremental monolith decomposition without breaking clients",
+      "question": "A project-management SaaS runs as one monolith at api.acme.com, and thousands of third-party integrations call it directly. The team wants to carve the monolith into microservices over the next year without breaking a single integration. How does an API gateway make this migration possible?",
+      "answer": "Put the gateway at api.acme.com and initially route everything to the monolith. As each capability is extracted, you change only the gateway's route table to point that path at the new service — the public API contract never moves, so integrations keep working throughout the migration."
+    },
+    {
+      "id": "api-gateway-03",
+      "type": "scenario",
+      "concept": "Request validation at the gateway rejects bad requests before backends",
+      "question": "An IoT platform ingests telemetry from millions of cheap sensors, and a firmware bug makes about 5% of devices send requests with missing headers and truncated JSON bodies. The ingestion services are burning significant CPU parsing and rejecting this garbage. Where should this junk be stopped, and why there?",
+      "answer": "At the API gateway's request-validation step: check URL validity, required headers, and body format before routing. Malformed requests get rejected at the edge so backend services never spend cycles on traffic that was doomed anyway."
+    },
+    {
+      "id": "api-gateway-04",
+      "type": "scenario",
+      "concept": "Request size validation middleware at the gateway",
+      "question": "A meme-sharing app accepts images as base64 fields inside JSON posts. A few users' scripts have started sending 300 MB payloads, and the upload service sometimes gets OOM-killed while buffering a request before its own size check can even run. Where should oversized requests be stopped?",
+      "answer": "At the gateway with request size validation middleware: enforce a maximum body size and reject oversized requests at the edge (e.g., with a 413). Backends then never have to buffer or parse a payload that was going to be rejected anyway."
+    },
+    {
+      "id": "api-gateway-05",
+      "type": "scenario",
+      "concept": "Centralized authentication middleware instead of per-service duplication",
+      "question": "A chat startup has nine microservices, and each one independently implements JWT verification. Two services have subtly broken expiry checks, and a third forgot to validate the signature at all, causing a security incident. What structural change should the team make?",
+      "answer": "Move authentication into the API gateway as middleware. Auth is a cross-cutting concern: verifying the JWT once at the edge gives every service consistent, correct enforcement and removes nine divergent implementations."
+    },
+    {
+      "id": "api-gateway-06",
+      "type": "scenario",
+      "concept": "Rate limiting enforced at the gateway choke point",
+      "question": "A gaming company's public API is being hammered by one partner's misconfigured client at 50x its quota, degrading several backend services at once. An engineer proposes adding rate-limit code to each affected service. What is the better placement, and why?",
+      "answer": "Enforce rate limiting at the API gateway. It is the single choke point all traffic passes through, so one limiter protects every backend uniformly and abusive clients are cut off before their requests consume any service capacity."
+    },
+    {
+      "id": "api-gateway-07",
+      "type": "scenario",
+      "concept": "IP allowlisting/blocklisting middleware",
+      "question": "A fintech company's internal admin API must only be reachable from the corporate VPN's IP range, but the endpoints currently sit on the same public API as customer traffic. Compliance wants network-level restriction without building a separate deployment. How can the gateway satisfy this?",
+      "answer": "Use the gateway's IP allowlisting middleware: for admin routes, accept only requests originating from the VPN's IP range and reject everything else at the edge. No separate infrastructure needed."
+    },
+    {
+      "id": "api-gateway-08",
+      "type": "scenario",
+      "concept": "SSL/TLS termination at the gateway",
+      "question": "A ticketing platform manages TLS certificates separately in fifteen microservices, and last month three services broke because their certs expired on different schedules. What gateway capability eliminates this class of outage?",
+      "answer": "Terminate SSL/TLS at the API gateway. Certificates then live and renew in one place, encrypted client traffic is decrypted at the edge, and individual services stop carrying certificate-management burden."
+    },
+    {
+      "id": "api-gateway-09",
+      "type": "scenario",
+      "concept": "CORS handling as gateway middleware",
+      "question": "A SaaS analytics dashboard served from app.metrico.io calls its API at api.metrico.io, and browsers are blocking the requests with cross-origin errors. Each backend team has been asked to add the right response headers, and they keep getting them inconsistent. Where should this be solved?",
+      "answer": "Handle CORS in the API gateway's middleware. The gateway attaches the correct cross-origin headers (and answers preflight requests) uniformly for every route, so no individual service has to get it right."
+    },
+    {
+      "id": "api-gateway-10",
+      "type": "scenario",
+      "concept": "Centralized traffic logging and monitoring middleware",
+      "question": "A marketplace with twenty microservices gets a partner complaint that \"the API was erroring last night.\" Engineers spend hours grepping twenty services' logs, each in a different format, trying to reconstruct which requests failed and where. What gateway middleware would have made this a five-minute lookup?",
+      "answer": "Traffic logging and monitoring at the gateway. Since every request passes through it, the gateway emits one uniform log stream and one set of metrics for all API traffic, giving a single place to see request rates, errors, and latencies across every service."
+    },
+    {
+      "id": "api-gateway-11",
+      "type": "scenario",
+      "concept": "Path-prefix routing rules mapping URLs to services",
+      "question": "A ride-hailing platform routes /drivers/* to driver-service and /riders/* to rider-service through its gateway. The team is launching a new payments-service for /payments/* endpoints. What has to change for clients to reach it, and what stays the same?",
+      "answer": "Only the gateway's route table changes: add a rule mapping /payments/* to payments-service's address. Clients keep calling the same public host and need no changes at all."
+    },
+    {
+      "id": "api-gateway-12",
+      "type": "scenario",
+      "concept": "Routing on HTTP method, headers, and query parameters, not just path",
+      "question": "A social feed team wants to split reads from writes: GET /posts should hit a read-optimized service while POST /posts hits a separate write service. A junior engineer objects that this is impossible since both share the same URL path. Is it possible, and how?",
+      "answer": "Yes. Gateways route on more than the path — they can match on HTTP method, headers, and query parameters. A rule sending GET /posts and POST /posts to different backends is standard gateway configuration."
+    },
+    {
+      "id": "api-gateway-13",
+      "type": "scenario",
+      "concept": "Routing is the gateway's fundamental function; middleware is secondary",
+      "question": "In a mock interview, a candidate introduces an API gateway and describes it entirely as \"the layer that does auth, rate limiting, and caching.\" The interviewer asks: \"If I stripped out all of that middleware, why would the gateway still need to exist?\" What answer is the interviewer looking for?",
+      "answer": "Routing. The gateway's core job — and the reason it exists at all — is mapping each incoming request to the correct backend service; middleware is a valuable add-on, and candidates commonly over-emphasize it while overlooking routing."
+    },
+    {
+      "id": "api-gateway-14",
+      "type": "scenario",
+      "concept": "Protocol translation from client HTTP/JSON to internal gRPC",
+      "question": "A video platform's internal services all communicate over gRPC for performance, but its public API must serve plain HTTP/JSON to web and mobile clients. The team is debating adding an HTTP endpoint to every service. What is the cleaner approach?",
+      "answer": "Let the API gateway do protocol translation: clients send HTTP requests, and the gateway converts them into gRPC calls to the backends. Services stay gRPC-only internally while the public API remains plain HTTP."
+    },
+    {
+      "id": "api-gateway-15",
+      "type": "scenario",
+      "concept": "Response transformation into the client-facing contract",
+      "question": "A fitness app's backend returns responses in a compact internal protobuf-derived format with internal field names, but the mobile client's contract specifies clean JSON with public field names. Where should the conversion from internal shape to public shape happen?",
+      "answer": "In the gateway's response-transformation step on the way back to the client. The gateway reshapes the backend's internal output into the JSON format the client expects, keeping services free of client-specific formatting concerns."
+    },
+    {
+      "id": "api-gateway-16",
+      "type": "scenario",
+      "concept": "Full response caching for hot non-personalized endpoints",
+      "question": "An online bookstore's /bestsellers endpoint returns the identical list to every user and gets millions of requests an hour during a promotion, all fanning through to the catalog service. The catalog database is straining. What gateway feature relieves this, and why is this endpoint a good fit?",
+      "answer": "Enable response caching at the gateway. This endpoint is ideal: it changes rarely and is not user-specific, so the gateway can serve the cached copy directly and the catalog service sees a tiny fraction of the traffic."
+    },
+    {
+      "id": "api-gateway-17",
+      "type": "scenario",
+      "concept": "Never cache user-specific responses at the gateway",
+      "question": "A telehealth portal enabled aggressive response caching at its gateway to cut latency. Within an hour, patients report seeing other patients' appointment lists on their own dashboard. What went wrong?",
+      "answer": "The gateway cached user-specific responses. One patient's /appointments payload was stored and then served to other users hitting the same route. Gateway caching must be restricted to responses that are identical for every caller — personalized data must never be cached this way."
+    },
+    {
+      "id": "api-gateway-18",
+      "type": "scenario",
+      "concept": "TTL versus event-based cache invalidation",
+      "question": "A news site caches its headlines endpoint at the gateway with a 10-minute TTL. During breaking news, editors publish corrections that readers don't see for up to 10 minutes, which the newsroom finds unacceptable, but shortening the TTL to seconds would gut the cache's value. What should the team change?",
+      "answer": "Switch to event-based invalidation: when an editor publishes, the CMS fires an event that evicts the cached headlines entry immediately. Updates appear instantly while unchanged content stays cached until it actually changes — better on both freshness and hit rate than any TTL compromise."
+    },
+    {
+      "id": "api-gateway-19",
+      "type": "scenario",
+      "concept": "Partial caching of the stable fragment of a response",
+      "question": "A travel-booking site's flight-details response combines rarely-changing data (aircraft, route, amenities, photos) with a live seat-availability count that must always be current. Full response caching is off the table because of the live count. Must the team forgo gateway caching entirely?",
+      "answer": "No — use partial caching. Cache the stable fragment (route, aircraft, amenities) and fetch only the volatile seat count live on each request, then compose the response. Most of the payload's cost is saved without serving stale availability."
+    },
+    {
+      "id": "api-gateway-20",
+      "type": "scenario",
+      "concept": "Cache storage choice: per-instance in-memory versus shared distributed store like Redis",
+      "question": "A weather API runs twelve gateway instances, each holding its own in-memory response cache for the popular /forecast endpoints. The backend still sees heavy traffic because every instance must warm its own copy of each entry independently, and overall hit rates are poor. What storage change fixes this?",
+      "answer": "Back the gateway cache with a shared distributed store such as Redis instead of per-instance memory. An entry populated by any one instance then serves all twelve, so hit rates jump and the backend is warmed once per entry instead of twelve times; in-memory caching only suits a single instance or tolerably duplicated hot keys."
+    },
+    {
+      "id": "api-gateway-21",
+      "type": "scenario",
+      "concept": "Statelessness makes gateway horizontal scaling safe",
+      "question": "A food-delivery app expects 10x traffic during a Super Bowl promotion. An engineer worries that adding more gateway instances will break things because \"requests from the same user might hit different gateways,\" and proposes sticky sessions. What property of a well-built gateway makes this worry unfounded?",
+      "answer": "Gateways are stateless — no instance holds per-user session data, so any instance can serve any request identically. That is exactly what makes horizontal scaling trivial: just add instances behind the load balancer. Sticky sessions would only be needed if someone wrongly put state in the gateway."
+    },
+    {
+      "id": "api-gateway-22",
+      "type": "scenario",
+      "concept": "An external load balancer distributes traffic across the gateway instances themselves",
+      "question": "A photo-sharing app runs six API gateway instances for capacity. During a design review, someone asks: \"The gateway routes traffic to backends, but what decides which of the six gateway instances a client's request lands on in the first place?\" What is the answer?",
+      "answer": "A separate load balancer (e.g., an ELB or NGINX tier) sits in front of the gateway fleet and spreads incoming client traffic across the instances. Client-to-gateway distribution is the external load balancer's job, distinct from anything the gateway itself does."
+    },
+    {
+      "id": "api-gateway-23",
+      "type": "scenario",
+      "concept": "The gateway performs internal load balancing across backend replicas",
+      "question": "A grocery-delivery platform's order-service runs eight replicas. An architect proposes inserting a dedicated load balancer between the API gateway and the order-service replicas so traffic is spread evenly. Is this layer necessary?",
+      "answer": "No. Load balancing across a backend service's replicas is a job the gateway itself handles when forwarding requests. Adding a separate internal LB layer for this duplicates functionality the gateway already provides."
+    },
+    {
+      "id": "api-gateway-24",
+      "type": "scenario",
+      "concept": "API gateway vs load balancer are different components",
+      "question": "During a design discussion at a logistics SaaS, a teammate says: \"We already run an ALB in front of our services, so we effectively have an API gateway.\" What is wrong with this claim?",
+      "answer": "A load balancer distributes identical traffic across identical copies of a service; an API gateway routes by request content (path, method, headers) to entirely different services and runs middleware like auth, rate limiting, and transformation. The ALB gives them none of that — the two components solve different problems and are commonly confused."
+    },
+    {
+      "id": "api-gateway-25",
+      "type": "true_false",
+      "concept": "A combined gateway/load-balancer box is an acceptable interview simplification",
+      "question": "True or false: In a system design interview, drawing a single combined box labeled \"API Gateway / Load Balancer\" at your system's entry point, instead of two separate boxes, is an acceptable simplification.",
+      "answer": "True — a single combined entry-point box is usually sufficient, and drawing out the full entry-path plumbing wastes time; you just need to be able to explain the two components' distinct roles if the interviewer probes."
+    },
+    {
+      "id": "api-gateway-26",
+      "type": "scenario",
+      "concept": "Global distribution with regional gateways, GeoDNS, and config synchronization",
+      "question": "A social fitness app hosts its single gateway deployment in Virginia. Users in Singapore and Berlin complain that every API call feels sluggish even though the backends themselves are fast. What deployment change addresses this, and what new operational challenge does it introduce?",
+      "answer": "Deploy gateway instances regionally and use GeoDNS to send each user to the nearest region, cutting the long first-hop latency. The new challenge is keeping routing rules and middleware configuration synchronized across all regional deployments."
+    },
+    {
+      "id": "api-gateway-27",
+      "type": "scenario",
+      "concept": "Managed gateway trade-off: integration speed versus cost and control",
+      "question": "A three-person startup runs its entire backend on AWS Lambda and needs auth, throttling, and routing in front of it by next month. They are debating self-hosting Kong on EC2 versus using AWS API Gateway. Which fits better here, and what is the trade they are accepting?",
+      "answer": "AWS API Gateway: it integrates natively with Lambda, ships throttling and auth out of the box, and requires no infrastructure for a tiny team to operate. The trade is cost at scale and less control/customization than a self-hosted gateway."
+    },
+    {
+      "id": "api-gateway-28",
+      "type": "mcq2",
+      "concept": "Google Cloud Endpoints: GCP-native managed gateway with first-class gRPC support",
+      "question": "A team runs its entire stack on Google Cloud, its internal services speak gRPC natively, and it wants a managed gateway with first-class gRPC support and automatic OpenAPI documentation. Which managed offering is the natural fit?",
+      "options": [
+        "Google Cloud Endpoints",
+        "AWS API Gateway"
+      ],
+      "answer": "Google Cloud Endpoints — it integrates tightly with GCP services and supports gRPC natively with automatic OpenAPI documentation; AWS API Gateway is built around the AWS ecosystem and would be a poor fit for an all-GCP, gRPC-first stack."
+    },
+    {
+      "id": "api-gateway-29",
+      "type": "mcq2",
+      "concept": "Kong: open-source, NGINX-based, plugin-extensible",
+      "question": "A platform team wants a self-hosted API gateway they fully control, built on the battle-tested NGINX core they already know, with a large plugin ecosystem for extending middleware. Which option matches these requirements?",
+      "options": [
+        "Kong",
+        "AWS API Gateway"
+      ],
+      "answer": "Kong — it is the open-source, self-hostable gateway built on NGINX with an extensive plugin ecosystem; AWS API Gateway is a managed cloud service you neither host nor extend at that level."
+    },
+    {
+      "id": "api-gateway-30",
+      "type": "mcq2",
+      "concept": "Tyk: GraphQL-native open-source gateway with built-in analytics and multi-datacenter support",
+      "question": "A company's public API is GraphQL, it wants API analytics built into the gateway rather than bolted on, and it must run across multiple data centers. Which open-source gateway matches these needs most directly?",
+      "options": [
+        "Tyk",
+        "Express Gateway"
+      ],
+      "answer": "Tyk — it offers native GraphQL support, built-in API analytics, and multi-data-center capabilities; Express Gateway is a lightweight Node.js gateway without that feature set."
+    },
+    {
+      "id": "api-gateway-31",
+      "type": "mcq2",
+      "concept": "Express Gateway: lightweight Node.js gateway for JavaScript stacks",
+      "question": "A small team whose entire backend is Node.js microservices wants a lightweight gateway their JavaScript developers can extend directly in the language they already use every day. Which open-source gateway fits best?",
+      "options": [
+        "Express Gateway",
+        "Kong"
+      ],
+      "answer": "Express Gateway — it is Node.js/JavaScript based and lightweight, designed specifically for Node microservice stacks; Kong is NGINX-based and heavier, so extending it pulls the team out of its language."
+    },
+    {
+      "id": "api-gateway-32",
+      "type": "scenario",
+      "concept": "Skip the gateway for a simple monolith with one client type",
+      "question": "A solo developer runs a habit-tracking web app: one monolithic backend, one web client, modest traffic. After reading about microservices best practices, they plan to spend a sprint putting an API gateway in front of it. Is this worthwhile?",
+      "answer": "No. A gateway earns its keep when it hides many services behind one entry point; with a single monolith and a single client type there is nothing to route or decouple, so it adds operational complexity and an extra hop for no benefit."
+    },
+    {
+      "id": "api-gateway-33",
+      "type": "scenario",
+      "concept": "Interview heuristic: mention the gateway briefly and move on",
+      "question": "In a mock system design interview for a ride-sharing system, a candidate spends ten minutes enumerating the gateway's middleware stack, plugin choices, and caching knobs, then runs out of time before covering matching and location tracking. How should the candidate have handled the gateway?",
+      "answer": "State that an API gateway sits at the entry point handling routing and middleware, then move on. The gateway is a supporting component interviewers rarely probe; the scored substance is in the problem-specific design, and dwelling on the gateway reads as unfocused."
+    },
+    {
+      "id": "api-gateway-34",
+      "type": "scenario",
+      "concept": "Keep business logic out of the gateway",
+      "question": "An insurance platform's team proposes implementing premium-discount calculation rules directly in their API gateway \"since every quote request passes through it anyway.\" Why is this a design mistake?",
+      "answer": "Gateways should stay thin: routing, middleware, and transformation only. Premium calculation is business logic and belongs in a backend service — embedding it in the gateway makes the gateway a hard-to-test, hard-to-version choke point and blurs the architecture's separation of concerns."
+    },
+    {
+      "id": "api-gateway-35",
+      "type": "scenario",
+      "concept": "Service discovery integration for dynamic backend locations",
+      "question": "An analytics platform on Kubernetes autoscales its services, so pod IPs churn constantly. The gateway's route table points at addresses that were entered by hand, and users see intermittent 502s whenever pods get rescheduled. What integration fixes this?",
+      "answer": "Integrate the gateway with service discovery (a service registry). The gateway then resolves each route to the currently healthy backend instances dynamically instead of relying on stale hardcoded addresses."
+    },
+    {
+      "id": "api-gateway-36",
+      "type": "scenario",
+      "concept": "Request timeout enforcement at the gateway",
+      "question": "In a document-collaboration SaaS, the PDF-export service occasionally deadlocks. When it does, users' export requests spin forever in the browser and gateway connections pile up until other routes degrade too. What gateway middleware limits the blast radius?",
+      "answer": "Request timeout handling: the gateway enforces a deadline on each backend call and returns an error to the client when it's exceeded. Hung backends then can't hold connections open indefinitely or drag down unrelated routes."
+    },
+    {
+      "id": "api-gateway-37",
+      "type": "scenario",
+      "concept": "Response compression middleware",
+      "question": "A classifieds app popular in regions with slow 3G connections serves large JSON listing payloads, and page loads are painfully slow. Backend teams don't want to add compression code to every service. What is the low-effort fix at the gateway?",
+      "answer": "Enable response compression middleware at the gateway (e.g., gzip). Payloads shrink dramatically over the wire for every route at once, with zero changes to backend services."
+    },
+    {
+      "id": "api-gateway-38",
+      "type": "scenario",
+      "concept": "API versioning by routing versions to different backends",
+      "question": "A payments company must keep its public /v1 API running for existing merchants while newer merchants adopt the incompatible /v2, which is served by a rewritten backend. How does the gateway let both live side by side during the multi-year migration?",
+      "answer": "The gateway handles API versioning by routing on the version: /v1/* requests go to the legacy backend and /v2/* to the new one. Both versions share one public entry point, and v1 can be retired later purely by changing gateway routes."
+    },
+    {
+      "id": "api-gateway-39",
+      "type": "true_false",
+      "concept": "Gateways belong in nearly every product-design interview as the entry point",
+      "question": "True or false: In product-style system design interviews, you should include an API gateway as your system's entry point in nearly every design.",
+      "answer": "True — it is the standard first point of contact in almost all product design interviews; you draw it, note that it handles routing and cross-cutting middleware, and move on to the problem-specific parts."
+    }
+  ]
+}

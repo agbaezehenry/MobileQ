@@ -118,10 +118,15 @@
       <button class="ctrl ctrl--b"    id="btn-b"    type="button"><span class="ctrl__arrow">→</span><span class="ctrl__label" id="btn-b-text">B</span></button>
     </nav>
 
+    <!-- Voice status and failures. Lives outside the card because the card is
+         rebuilt on every deal and this has to outlive that. -->
+    <p class="voice-note is-hidden" id="voice-note"></p>
+
     <!-- Written cards have no left/right, so they get their own control row. -->
     <nav class="controls is-hidden" id="controls-open" aria-label="Answer in your own words">
       <button class="ctrl ctrl--skip" id="btn-open-skip"   type="button"><span class="ctrl__arrow">↑</span><span class="ctrl__label">Skip</span></button>
-      <button class="ctrl ctrl--send" id="btn-open-submit" type="button"><span class="ctrl__arrow">&#10003;</span><span class="ctrl__label">Submit answer</span></button>
+      <button class="ctrl ctrl--mic"  id="btn-open-mic"    type="button" aria-pressed="false"><span class="ctrl__arrow" id="mic-glyph">&#127908;</span><span class="ctrl__label" id="mic-label">Speak</span></button>
+      <button class="ctrl ctrl--send" id="btn-open-submit" type="button"><span class="ctrl__arrow">&#10003;</span><span class="ctrl__label">Submit</span></button>
     </nav>
 
     <!-- Verdict + explanation. Shown after a committed answer in slow mode, and
@@ -134,6 +139,11 @@
         <p class="verdict__mark" id="verdict-mark"></p>
         <p class="verdict__said is-hidden" id="verdict-said"></p>
         <p class="verdict__line" id="verdict-line"></p>
+
+        <!-- The grader's checklist: one line per thing the answer had to say.
+             Written cards only, and only when a grader marked it. -->
+        <ul class="verdict__points is-hidden" id="verdict-points"></ul>
+
         <p class="verdict__model is-hidden" id="verdict-model"></p>
         <p class="verdict__why" id="verdict-why"></p>
 
@@ -196,22 +206,38 @@
   <div class="gate is-hidden" id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
     <div class="gate__card">
       <p class="eyebrow" id="gate-eyebrow">before you start</p>
-      <h2 class="gate__title" id="gate-title">Anthropic API key</h2>
+      <h2 class="gate__title" id="gate-title">API keys</h2>
       <p class="gate__line">
-        Every card has an <b>Ask</b> button that opens a chat with Claude about that
-        card. It needs your own key. It is stored in this browser only and is sent
-        nowhere but api.anthropic.com.
+        Both are optional &mdash; the deck itself needs neither. They are stored in
+        this browser only, and each one is sent to its own provider and nowhere else.
       </p>
-      <input class="ask__input gate__input" id="gate-input" type="password"
-             placeholder="sk-ant-&hellip;" autocomplete="off" autocapitalize="off"
-             autocorrect="off" spellcheck="false" />
-      <p class="gate__note">Create one at console.anthropic.com &rarr; API keys. Usage bills to that account.</p>
+
+      <div class="gate__field">
+        <label class="gate__label" for="gate-input">
+          Anthropic <span>&mdash; the <b>Ask</b> chat, and marking written answers</span>
+        </label>
+        <input class="ask__input gate__input" id="gate-input" type="password"
+               placeholder="sk-ant-&hellip;" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" />
+        <p class="gate__note">console.anthropic.com &rarr; API keys</p>
+      </div>
+
+      <div class="gate__field">
+        <label class="gate__label" for="gate-oai">
+          OpenAI <span>&mdash; speaking a written answer instead of typing it</span>
+        </label>
+        <input class="ask__input gate__input" id="gate-oai" type="password"
+               placeholder="sk-&hellip;" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" />
+        <p class="gate__note">platform.openai.com &rarr; API keys</p>
+      </div>
+
       <div class="btn-row">
         <button class="btn btn--primary" id="btn-gate-save" type="button">Save &amp; start</button>
-        <button class="btn" id="btn-gate-skip" type="button">Start without it</button>
+        <button class="btn" id="btn-gate-skip" type="button">Start without them</button>
       </div>
       <p class="footnote">
-        <button class="linkish is-hidden" id="btn-gate-forget" type="button">Forget the stored key</button>
+        <button class="linkish is-hidden" id="btn-gate-forget" type="button">Forget the stored keys</button>
       </p>
     </div>
   </div>

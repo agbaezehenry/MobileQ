@@ -1,0 +1,250 @@
+{
+  "section": "core-concepts",
+  "subsection": "Consistent Hashing",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/consistent-hashing",
+  "concepts": [
+    "Modulo hashing remaps most keys when a node is added (cache-miss storm diagnosis)",
+    "Quantitative comparison: ~90% of keys move under modulo at N=10 vs ~1/N under consistent hashing",
+    "Ring lookup rule: walk clockwise to the first node at or after the key",
+    "Adding a node moves only the predecessor-to-new-node range, taken from the successor",
+    "Node removal or failure affects only the clockwise successor",
+    "Virtual nodes prevent successor-overload cascades on failure",
+    "Virtual nodes are logical ring positions, not additional hardware",
+    "Virtual-node count is the tuning knob for load smoothness",
+    "Few single-position nodes carve the ring into unequal arcs (structural imbalance)",
+    "Hot spot recognition: popular-key workload skew, not bad hashing",
+    "Structural vs workload imbalance: virtual nodes cannot fix hot keys",
+    "Read replication for read-heavy hot keys",
+    "Key salting with suffixes to scatter a hot key",
+    "Adaptive traffic-based rebalancing (DynamoDB-style)",
+    "Replication turns failure handling into replica promotion, not data movement",
+    "Ring wrap-around: keys hashing past the last node position belong to the first node",
+    "Replica placement on consecutive clockwise successors (Cassandra-style)",
+    "Redis Cluster's fixed hash slots (16,384 via CRC16) versus a hash ring",
+    "When to go deep in an interview: infrastructure-from-scratch prompts",
+    "When to only mention it: managed services already handle partitioning",
+    "The term is used loosely; the core principle is minimal data movement",
+    "Stable request routing / session affinity via consistent hashing",
+    "CDN edge-server content assignment that survives edge churn",
+    "Sharding's core routing question: a deterministic, stable key-to-shard mapping",
+    "Key hash positions are independent of node count (fixed hash space)",
+    "Modulo remapping on node removal (scale-in) is equally costly",
+    "Cassandra and DynamoDB as real-world consistent hashing adopters",
+    "With virtual nodes, an added node pulls small slices from many donors instead of one",
+    "Weighted virtual nodes let heterogeneous servers own ring shares proportional to capacity"
+  ],
+  "question_count": 29,
+  "questions": [
+    {
+      "id": "consistent-hashing-01",
+      "type": "scenario",
+      "concept": "Modulo hashing remaps most keys when a node is added (cache-miss storm diagnosis)",
+      "question": "An electronics e-commerce site caches product pages across 3 Memcached nodes, choosing a node with hash(productId) % 3. Ahead of a holiday sale they add a fourth node for extra capacity. Immediately the cache hit rate collapses and the primary database nearly tips over under the flood of reads. What is going wrong?",
+      "answer": "Changing N in hash(key) % N reassigned about three-quarters of all keys to different nodes, so most lookups missed simultaneously and the miss storm hammered the database. Consistent hashing would have confined the reshuffle to roughly the quarter of keys the new node takes over."
+    },
+    {
+      "id": "consistent-hashing-02",
+      "type": "scenario",
+      "concept": "Quantitative comparison: ~90% of keys move under modulo at N=10 vs ~1/N under consistent hashing",
+      "question": "A fintech company shards account ledgers across 10 database nodes using modulo hashing and plans to add an 11th node. An engineer estimates that about one-eleventh of the data will need to migrate. Is her estimate right, and under what scheme would it be?",
+      "answer": "No — under modulo hashing roughly 90% of keys change owners when N goes from 10 to 11, so almost everything migrates. Her ~1/N estimate is only true under consistent hashing, where just the keys in the new node's ring range move."
+    },
+    {
+      "id": "consistent-hashing-03",
+      "type": "scenario",
+      "concept": "Ring lookup rule: walk clockwise to the first node at or after the key",
+      "question": "An IoT platform stores sensor readings on a hash ring. A new hire implements the read path as 'pick the node whose ring position is numerically closest to the key's hash, in either direction,' while the write path uses the standard rule. Reads now fail for a large share of keys even though nothing was deleted. What is the bug?",
+      "answer": "The ring rule is to walk clockwise from the key's position to the first node at or after it. 'Closest in either direction' picks the predecessor for keys that sit nearer to it, so reads go to a node that never stored the data."
+    },
+    {
+      "id": "consistent-hashing-04",
+      "type": "scenario",
+      "concept": "Adding a node moves only the predecessor-to-new-node range, taken from the successor",
+      "question": "A ride-hailing service keeps trip histories in a consistent-hashed store with nodes at positions 0, 25, 50, and 75 on a 0-100 ring. They add a new node at position 90, and the DBA books a long maintenance window to rebalance the entire dataset. What data actually needs to move?",
+      "answer": "Only keys hashing into the range between 75 and 90 — they migrate from the node at position 0 (their former clockwise successor) to the new node. Every other key stays where it is, so a full rebalance is wasted effort."
+    },
+    {
+      "id": "consistent-hashing-05",
+      "type": "scenario",
+      "concept": "Node removal or failure affects only the clockwise successor",
+      "question": "A chat product keeps user session state on a consistent-hashed cache ring. One cache node crashes overnight, and the on-call engineer needs to know which surviving nodes now hold responsibility they didn't have before. What should you tell her?",
+      "answer": "Exactly one: the dead node's clockwise successor, which inherits the failed node's key range. Every other node's assignments are completely unchanged."
+    },
+    {
+      "id": "consistent-hashing-06",
+      "type": "scenario",
+      "concept": "Virtual nodes prevent successor-overload cascades on failure",
+      "question": "A multiplayer game stores live match state on a hash ring where each server occupies a single ring position. When one server dies, the next server on the ring inherits all of its load, doubles in traffic, and then dies too, cascading around the ring. The team understands why the neighbor absorbs everything — what design change stops the cascade?",
+      "answer": "Virtual nodes: give each server many positions scattered around the ring so a failed server's range is split among many different successors. Its load then spreads thinly across the fleet instead of doubling one neighbor."
+    },
+    {
+      "id": "consistent-hashing-07",
+      "type": "scenario",
+      "concept": "Virtual nodes are logical ring positions, not additional hardware",
+      "question": "An SRE at a SaaS analytics vendor proposes adding virtual nodes to smooth out their cache ring. A manager vetoes it: 'There's no budget for more servers this quarter.' What is the manager misunderstanding?",
+      "answer": "Virtual nodes are not machines — they are extra hash positions (e.g., hashing 'node1-vn1', 'node1-vn2', ...) that all point back to the same physical server. The cost is a slightly larger routing table, not new hardware."
+    },
+    {
+      "id": "consistent-hashing-08",
+      "type": "scenario",
+      "concept": "Virtual-node count is the tuning knob for load smoothness",
+      "question": "A logistics company's fleet-tracking store runs 6 identical nodes with 4 virtual nodes each, yet per-node data volume still varies by 40%. No individual key is unusually popular. What is the cheapest lever to even out the distribution?",
+      "answer": "Increase the number of virtual nodes per server. More positions per node makes each server's total slice of the ring statistically converge toward 1/N, so the imbalance shrinks."
+    },
+    {
+      "id": "consistent-hashing-09",
+      "type": "scenario",
+      "concept": "Few single-position nodes carve the ring into unequal arcs (structural imbalance)",
+      "question": "An edtech startup launches a 3-node consistent-hashed cache, hashing each node to one ring position. From day one, one node holds 60% of all keys even though traffic per key is uniform. Why is the ring so lopsided?",
+      "answer": "Three random positions carve the circle into arcs of very unequal length, and each node owns everything in its arc — a structural imbalance baked in at placement time. It has nothing to do with traffic; virtual nodes are the fix."
+    },
+    {
+      "id": "consistent-hashing-10",
+      "type": "scenario",
+      "concept": "Hot spot recognition: popular-key workload skew, not bad hashing",
+      "question": "A food-delivery app's restaurant cache is evenly balanced by key count, but the node holding one viral restaurant's menu sits at 100% CPU while the others idle. An engineer proposes switching hash functions to fix the skew. What is actually going on?",
+      "answer": "This is a hot key: one wildly popular key drives disproportionate traffic to whichever node owns it. A different hash function just relocates the problem — the key still lands on exactly one node — so they need replication or salting for that key instead."
+    },
+    {
+      "id": "consistent-hashing-11",
+      "type": "scenario",
+      "concept": "Structural vs workload imbalance: virtual nodes cannot fix hot keys",
+      "question": "A social network sees one celebrity's profile overwhelming its cache node, so the team quadruples the virtual nodes per server. The overloaded node's traffic doesn't budge. Why didn't the change help?",
+      "answer": "Virtual nodes cure structural imbalance — uneven division of the key space — but this is workload imbalance: a single key's traffic. That key still hashes to exactly one owner no matter how many virtual nodes exist, so the fix is replicating or salting the hot key."
+    },
+    {
+      "id": "consistent-hashing-12",
+      "type": "scenario",
+      "concept": "Read replication for read-heavy hot keys",
+      "question": "A live-sports app has one cache key — the championship game's scoreboard — read tens of thousands of times per second, dwarfing every other key, while writes to it are only a few per minute. Which hot-key mitigation fits this profile, and why?",
+      "answer": "Replicate that key to several nodes and load-balance reads across the copies. A read-heavy, write-light hot key is the textbook case for read replication, since keeping a handful of replicas in sync is cheap when writes are rare."
+    },
+    {
+      "id": "consistent-hashing-13",
+      "type": "scenario",
+      "concept": "Key salting with suffixes to scatter a hot key",
+      "question": "A ticketing platform expects one superstar concert's availability key to take 100x normal read traffic at on-sale time. They plan to write the value under ten keys — 'show123-0' through 'show123-9' — with readers picking a random suffix. What is this technique and what does it buy them?",
+      "answer": "Key salting: the suffixes make each copy hash to a different ring position, scattering the read load across many nodes. The price is fanning out writes to all ten copies and making readers suffix-aware."
+    },
+    {
+      "id": "consistent-hashing-14",
+      "type": "scenario",
+      "concept": "Adaptive traffic-based rebalancing (DynamoDB-style)",
+      "question": "An ad-tech platform's hot keys change hour by hour as campaigns launch and end, so any static ring layout is stale within a day. Pre-salting every key is deemed too expensive. What class of approach handles this moving target, and which major database works this way?",
+      "answer": "Adaptive rebalancing: continuously monitor per-range traffic and automatically shift hot key ranges off overloaded nodes as heat moves. DynamoDB manages partitions this way under the hood."
+    },
+    {
+      "id": "consistent-hashing-15",
+      "type": "scenario",
+      "concept": "Replication turns failure handling into replica promotion, not data movement",
+      "question": "A healthcare-records platform consistent-hashes patient data and replicates each partition across three availability zones. A new SRE drafts an emergency runbook for mass-copying a failed node's data to its ring successor. Why is the runbook solving a non-problem?",
+      "answer": "With replication in place, a node failure is handled by promoting an existing replica to primary — typically via a consensus protocol like Raft — so no bulk data moves at failure time. Bulk transfer is reserved for planned membership changes like adding capacity, plus background re-replication to restore the replication factor."
+    },
+    {
+      "id": "consistent-hashing-16",
+      "type": "scenario",
+      "concept": "Ring wrap-around: keys hashing past the last node position belong to the first node",
+      "question": "A gaming company builds an in-house consistent-hashed cache. In testing, lookups for a subset of keys throw a 'no owner found' error, and debugging shows every failing key hashes to a position greater than the highest node position on the ring. What did the implementers forget?",
+      "answer": "The ring wraps around: a key that hashes past the last node position belongs to the first node encountered continuing clockwise through zero, i.e., the lowest-positioned node. Their lookup treated the ring as a flat sorted list and fell off the end instead of wrapping."
+    },
+    {
+      "id": "consistent-hashing-17",
+      "type": "mcq2",
+      "concept": "Replica placement on consecutive clockwise successors (Cassandra-style)",
+      "question": "In a Cassandra-style ring store with replication factor 3, where do the three copies of a key live?",
+      "options": [
+        "On the key's owning node plus the next two distinct nodes walking clockwise around the ring",
+        "On three nodes chosen randomly per key and recorded in a lookup table"
+      ],
+      "answer": "On the key's owning node plus the next two distinct nodes walking clockwise around the ring — consecutive-successor placement is deterministic, so any node can compute replica locations from ring state alone, and reads survive a failure by hitting the next replica."
+    },
+    {
+      "id": "consistent-hashing-18",
+      "type": "scenario",
+      "concept": "Redis Cluster's fixed hash slots (16,384 via CRC16) versus a hash ring",
+      "question": "A travel-booking company adopts Redis Cluster to cache flight-search results. During setup an engineer asks where to configure the hash ring and the virtual-node count. What should the team tell him?",
+      "answer": "There is no ring to configure: Redis Cluster divides the key space into 16,384 fixed slots via CRC16(key) mod 16384 and assigns slot ranges to nodes. Rebalancing means explicitly reassigning slots between nodes — simpler to reason about than a ring, but it needs more coordination."
+    },
+    {
+      "id": "consistent-hashing-19",
+      "type": "mcq2",
+      "concept": "When to go deep in an interview: infrastructure-from-scratch prompts",
+      "question": "In which system design interview prompt should you proactively explain hash rings, virtual nodes, and rebalancing in depth?",
+      "options": [
+        "Design a distributed cache from scratch",
+        "Design an e-commerce checkout flow backed by managed cloud databases"
+      ],
+      "answer": "Design a distributed cache from scratch — in infrastructure-from-scratch prompts (distributed cache, database, message broker), data placement IS the problem, so the mechanics are the substance of your answer; in product designs the platform already handles it."
+    },
+    {
+      "id": "consistent-hashing-20",
+      "type": "true_false",
+      "concept": "When to only mention it: managed services already handle partitioning",
+      "question": "In a product-design interview where you have chosen DynamoDB for storage, walking through hash ring mechanics unprompted is a reliable way to earn points.",
+      "answer": "False — DynamoDB handles partitioning for you, so a one-line acknowledgment like 'consistent hashing distributes the data across partitions' is all that's needed. Go deep only if the interviewer explicitly asks; unprompted lectures burn time on a solved problem."
+    },
+    {
+      "id": "consistent-hashing-21",
+      "type": "true_false",
+      "concept": "The term is used loosely; the core principle is minimal data movement",
+      "question": "If a system's documentation says it uses consistent hashing, you can assume it implements a literal clockwise hash ring.",
+      "answer": "False — the term is used loosely, and many such systems actually run variants like fixed hash-slot partitioning. The defining property is minimizing data movement when nodes join or leave, not the ring data structure itself."
+    },
+    {
+      "id": "consistent-hashing-22",
+      "type": "scenario",
+      "concept": "Stable request routing / session affinity via consistent hashing",
+      "question": "A collaborative document editor must route every websocket for a given document to the same backend server, because edits are merged in that server's memory. The fleet autoscales throughout the day: round-robin breaks affinity entirely, and modulo re-routes nearly every live session at each scale event. What routing scheme should they use?",
+      "answer": "Consistent hashing on the document ID. Each document sticks to one server, and a scale event only re-homes the small slice of documents adjacent to the added or removed server instead of disrupting every session."
+    },
+    {
+      "id": "consistent-hashing-23",
+      "type": "scenario",
+      "concept": "CDN edge-server content assignment that survives edge churn",
+      "question": "A video-streaming CDN must decide which edge server caches each video. Edge servers are added and drained many times a day as capacity is tuned regionally. Why is consistent hashing the standard mapping choice here?",
+      "answer": "Hashing the content ID onto a ring pins each video to a stable edge server, so caches stay warm, and any edge change only re-homes the videos in one slice of the ring. With modulo, every capacity tweak would effectively flush the entire edge cache."
+    },
+    {
+      "id": "consistent-hashing-24",
+      "type": "scenario",
+      "concept": "Sharding's core routing question: a deterministic, stable key-to-shard mapping",
+      "question": "A podcast platform's single Postgres instance is saturated, and the team agrees to split its data across four machines. Before writing any migration code, what is the first design question they must answer, and what property should a good answer have?",
+      "answer": "Which machine owns which key — they need a deterministic key-to-shard mapping every client computes identically. The quality bar is how little data must move when the machine count changes later, which is exactly what consistent hashing optimizes."
+    },
+    {
+      "id": "consistent-hashing-25",
+      "type": "scenario",
+      "concept": "Key hash positions are independent of node count (fixed hash space)",
+      "question": "A music-streaming engineer pushes back on adopting consistent hashing: 'When we add a server, every song ID gets hashed again, so everything moves anyway — how is this better?' What is the flaw in his reasoning?",
+      "answer": "Keys hash into a fixed space (say 0 to 2^32-1) that has nothing to do with the server count, so a key's ring position never changes when servers come and go. Only the ownership boundaries between nodes shift — that decoupling of key placement from N is the entire trick."
+    },
+    {
+      "id": "consistent-hashing-26",
+      "type": "scenario",
+      "concept": "Modulo remapping on node removal (scale-in) is equally costly",
+      "question": "A photo-sharing app shrinks its modulo-sharded cache fleet from 8 nodes to 6 to cut costs, expecting only the two removed nodes' keys — about 25% — to relocate. After the change, latency spikes across the entire app. What did they miscalculate?",
+      "answer": "Removing nodes changes N in hash(key) % N, which remaps most keys — here roughly 75%, not 25% — so far more of the cache went cold than just the removed nodes' share. Only consistent hashing limits scale-in movement to the removed nodes' own ranges."
+    },
+    {
+      "id": "consistent-hashing-27",
+      "type": "true_false",
+      "concept": "Cassandra and DynamoDB as real-world consistent hashing adopters",
+      "question": "Apache Cassandra and Amazon DynamoDB both rely on consistent hashing to place partitions across nodes.",
+      "answer": "True — Cassandra distributes data around its token ring using consistent hashing, and DynamoDB uses consistent hashing under the hood for partition placement, which is why both scale out with minimal data reshuffling."
+    },
+    {
+      "id": "consistent-hashing-28",
+      "type": "scenario",
+      "concept": "With virtual nodes, an added node pulls small slices from many donors instead of one",
+      "question": "A streaming service adds a cache server to its ring every few weeks as its catalog grows. On the old design, where each server held one ring position, every capacity add crushed a single existing server, which had to ship its donated key range to the newcomer while still serving production traffic. After migrating to virtual nodes, what changes about the next capacity add?",
+      "answer": "The new server's many virtual positions land all over the ring, so it takes a small slice from many different servers instead of one big slice from a single neighbor. The migration work is spread across the whole fleet, and no single donor gets overwhelmed."
+    },
+    {
+      "id": "consistent-hashing-29",
+      "type": "scenario",
+      "concept": "Weighted virtual nodes let heterogeneous servers own ring shares proportional to capacity",
+      "question": "A caching fleet mixes old servers with 32 GB of RAM and new ones with 128 GB. With the same number of virtual nodes assigned to every server, the big machines sit mostly empty while the old ones run out of memory. Without replacing hardware or abandoning consistent hashing, how do they make the big machines carry more of the data?",
+      "answer": "Assign the 128 GB servers proportionally more virtual nodes — about four times as many — so they own a correspondingly larger share of the ring. Virtual-node count doubles as a capacity weight: a server's expected fraction of keys is proportional to its number of ring positions."
+    }
+  ]
+}

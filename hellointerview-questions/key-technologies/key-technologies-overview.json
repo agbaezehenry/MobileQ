@@ -1,0 +1,374 @@
+{
+  "section": "key-technologies",
+  "subsection": "Key Technologies Overview",
+  "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/key-technologies",
+  "concepts": [
+    "Store blob bytes in object storage with metadata pointers in the core database",
+    "Presigned URLs let clients upload directly to blob storage, bypassing app servers",
+    "Time-limited presigned URLs secure private file downloads",
+    "Multipart/chunked upload gives resume-on-failure and parallelism for large files",
+    "Managed object storage already provides ~11 nines durability — don't build your own replication",
+    "Serving blob downloads through a CDN caches popular files at edges near users",
+    "Inverted indexes turn full-text search from table scans into term lookups",
+    "Tokenization splits text into individual terms before inverted indexing",
+    "Stemming normalizes word variants to a root form so they match",
+    "Fuzzy search tolerates typos via edit distance",
+    "A search-optimized database is overkill for exact-match key lookups",
+    "Postgres built-in full-text search can defer a dedicated search engine at moderate scale",
+    "Search indexes are updated asynchronously, so new data is briefly unsearchable",
+    "L4 load balancers suit persistent connections like WebSockets; L7 suits HTTP routing",
+    "In interviews, load balancers can stay implicit behind 'horizontally scaled'",
+    "Queues buffer bursty traffic so spikes wait instead of being dropped",
+    "Queues move long-running work off the synchronous request path",
+    "Queues are wrong for latency-sensitive synchronous request/response flows",
+    "A queue cannot fix chronic under-capacity — backpressure or more workers can",
+    "Partition keys give per-key message ordering while allowing parallelism",
+    "At-least-once delivery means consumers must be idempotent against duplicates",
+    "Dead letter queues quarantine poison messages after max retries",
+    "A skewed partition key creates a hot partition that lags",
+    "Streams differ from queues by retention, replay, and multiple consumers",
+    "Event sourcing stores an immutable event log and derives state from it",
+    "Separate consumer groups each get the full stream with independent offsets",
+    "Tumbling windows are non-overlapping; sliding windows overlap",
+    "Stream partition replication tolerates broker failure",
+    "In-process locks don't span servers — cross-server mutual exclusion needs a distributed lock",
+    "Lock expiry (TTL) prevents a crashed holder from locking a resource forever",
+    "Lock acquisition must be a single atomic operation, not check-then-set",
+    "Acquiring multiple locks in a consistent global order prevents deadlock",
+    "Fine-grained locks preserve concurrency; one coarse lock serializes everything",
+    "Single-statement atomic updates belong in a database transaction, not a distributed lock",
+    "LFU beats LRU when a stable hot set gets polluted by one-off scans",
+    "TTL-only cache invalidation serves stale data until expiry; event-driven invalidation keeps it fresh",
+    "Write-back caching absorbs heavy write rates at the cost of a data-loss window",
+    "Write-around caching makes writes fast but the first subsequent read a miss",
+    "Write-through caching keeps cache and database consistent at the cost of slower writes",
+    "Write-heavy, rarely-reread data is a poor caching candidate",
+    "CDN edges cache per region: first request misses to origin, later ones hit",
+    "CDNs can cache identical-for-everyone API responses, not just static assets",
+    "Per-user personalized responses must not be cached at shared CDN edges",
+    "Content-hashed/versioned asset URLs sidestep CDN invalidation after deploys"
+  ],
+  "question_count": 44,
+  "questions": [
+    {
+      "id": "key-technologies-overview-01",
+      "type": "scenario",
+      "concept": "Store blob bytes in object storage with metadata pointers in the core database",
+      "question": "A photo-sharing startup stores every uploaded image as a binary column in its Postgres database. Storage costs are climbing fast, backups take hours, and image reads are competing with transactional queries. What should the team change, and why?",
+      "answer": "Move the image bytes to object storage (e.g., S3) and keep only metadata plus a URL pointer in Postgres. Object storage is an order of magnitude cheaper per GB and built for large binaries, while the database stays small, fast, and queryable."
+    },
+    {
+      "id": "key-technologies-overview-02",
+      "type": "scenario",
+      "concept": "Presigned URLs let clients upload directly to blob storage, bypassing app servers",
+      "question": "A video platform routes every user upload through its application servers, which then write the file to S3. During peak hours the app servers max out on bandwidth and CPU even though the rest of the system is idle. How should the upload path be redesigned?",
+      "answer": "Have the server generate a time-limited presigned URL and let the client upload directly to S3. The app servers only mint the URL and record metadata, so file bytes never flow through them and the bottleneck disappears."
+    },
+    {
+      "id": "key-technologies-overview-03",
+      "type": "scenario",
+      "concept": "Time-limited presigned URLs secure private file downloads",
+      "question": "A fintech app stores customers' account statements in a private storage bucket. An engineer suggests making the bucket public so the web app can link to files directly, since proxying downloads through the backend is slow. What is the right approach instead?",
+      "answer": "Generate short-lived presigned download URLs per request. The client still downloads directly from storage, but access is temporary and scoped to one object, so private documents are never publicly exposed."
+    },
+    {
+      "id": "key-technologies-overview-04",
+      "type": "scenario",
+      "concept": "Multipart/chunked upload gives resume-on-failure and parallelism for large files",
+      "question": "A dashcam company's mobile app uploads 2 GB video files over flaky LTE connections. When a connection drops at 90%, the entire upload restarts from zero, and users are abandoning the app. What mechanism fixes this?",
+      "answer": "Use multipart (chunked) upload: split the file into pieces, upload them independently, and retry or resume only the missing chunks after a failure. Chunks can also upload in parallel, which speeds up the transfer."
+    },
+    {
+      "id": "key-technologies-overview-05",
+      "type": "scenario",
+      "concept": "Managed object storage already provides ~11 nines durability — don't build your own replication",
+      "question": "A team building a document-sharing product on S3 plans a sprint to copy every uploaded file to three self-managed VMs 'so we don't lose customer data if S3 fails'. Is this sprint worth it, and why?",
+      "answer": "No. Managed object storage already replicates and erasure-codes data internally for roughly eleven nines of durability, far beyond what a hand-rolled VM copy scheme achieves. The custom layer adds cost and failure modes without adding safety."
+    },
+    {
+      "id": "key-technologies-overview-06",
+      "type": "scenario",
+      "concept": "Serving blob downloads through a CDN caches popular files at edges near users",
+      "question": "A podcast app stores episode audio in an S3 bucket in Oregon and hands listeners presigned URLs pointing straight at the bucket. US listeners are happy, but users in Europe and Asia report slow starts and constant buffering on popular shows. What should be added to the delivery path?",
+      "answer": "Put a CDN in front of the blob storage bucket and serve downloads through it. Edges near each listener cache popular episodes, so most requests are served locally instead of crossing the ocean to the origin — the standard pattern is metadata in the database, bytes in blob storage, delivery via CDN."
+    },
+    {
+      "id": "key-technologies-overview-07",
+      "type": "scenario",
+      "concept": "Inverted indexes turn full-text search from table scans into term lookups",
+      "question": "A ticketing site implements event search with SQL: WHERE title LIKE '%springsteen%' over 40 million rows. Searches take 8+ seconds and pin the database CPU. Why is this slow, and what class of system fixes it?",
+      "answer": "A leading-wildcard LIKE can't use a B-tree index, so every query scans the table. A search-optimized database builds an inverted index mapping each term to the documents containing it, turning search into a fast lookup instead of a scan."
+    },
+    {
+      "id": "key-technologies-overview-08",
+      "type": "scenario",
+      "concept": "Tokenization splits text into individual terms before inverted indexing",
+      "question": "A job board builds its own mini search engine and inserts each full job description into the index as one atomic string. A search for 'python' returns nothing unless a description is literally just the word 'python', even though thousands of postings mention it. What processing step did the team skip?",
+      "answer": "Tokenization: breaking each document — and each query — into individual words before indexing. The inverted index maps individual terms to the documents containing them, so without splitting text into tokens there are no term-level entries for a query word to match."
+    },
+    {
+      "id": "key-technologies-overview-09",
+      "type": "scenario",
+      "concept": "Stemming normalizes word variants to a root form so they match",
+      "question": "A recipe app's new search engine indexes exact words. Users searching 'baking' get no results for recipes titled 'Baked Ziti' or 'Easy Bakes', even though they clearly match. What feature of text analysis is missing?",
+      "answer": "Stemming. Reducing words to their root form ('baking', 'baked', 'bakes' → 'bake') at both index time and query time makes all variants land on the same inverted-index entry, so they match each other."
+    },
+    {
+      "id": "key-technologies-overview-10",
+      "type": "scenario",
+      "concept": "Fuzzy search tolerates typos via edit distance",
+      "question": "A restaurant discovery app finds that a large share of mobile searches return zero results — queries like 'restarant' or 'sushu' fail even though matching entries exist. What capability should the search system add, and how does it work?",
+      "answer": "Fuzzy search based on edit distance: the engine matches terms within a small number of character insertions, deletions, or substitutions, so 'restarant' still finds 'restaurant'. A tolerance of 1–2 edits catches most typos without flooding results."
+    },
+    {
+      "id": "key-technologies-overview-11",
+      "type": "mcq2",
+      "concept": "A search-optimized database is overkill for exact-match key lookups",
+      "question": "An e-commerce team is building an order-status page where customers paste their exact order ID. One engineer wants to stand up an Elasticsearch cluster for it; another wants a B-tree index on order_id in the existing database. Which is right?",
+      "options": [
+        "Add a B-tree index on order_id in the existing database",
+        "Stand up an Elasticsearch cluster for order lookups"
+      ],
+      "answer": "Add a B-tree index on order_id in the existing database — search-optimized databases earn their operational cost for full-text relevance search, not exact-match key lookups a normal index already serves in milliseconds."
+    },
+    {
+      "id": "key-technologies-overview-12",
+      "type": "scenario",
+      "concept": "Postgres built-in full-text search can defer a dedicated search engine at moderate scale",
+      "question": "A niche blogging platform runs entirely on one Postgres instance, holds about 150,000 posts, and serves a few thousand searches a day. For its new search box, the team is planning to deploy and operate a three-node Elasticsearch cluster. What lighter option should they weigh first, and when would the cluster be justified?",
+      "answer": "Use Postgres's built-in full-text search (tsvector columns with a GIN index), which provides tokenization, stemming, and ranking at this scale with zero new infrastructure. A dedicated search engine earns its operational burden at much larger scale or when advanced relevance and fuzzy features become the product."
+    },
+    {
+      "id": "key-technologies-overview-13",
+      "type": "scenario",
+      "concept": "Search indexes are updated asynchronously, so new data is briefly unsearchable",
+      "question": "On a marketplace, sellers create a listing and immediately search for it to confirm it's live. For a few seconds the search returns nothing, even though the listing row is already in the primary database, and support keeps getting 'my listing is broken' tickets. What is going on?",
+      "answer": "The search index is populated asynchronously from the primary database, so it's eventually consistent — new documents take seconds to become searchable. Nothing is broken; either set expectations in the UI or serve the seller's own listings from the primary database."
+    },
+    {
+      "id": "key-technologies-overview-14",
+      "type": "scenario",
+      "concept": "L4 load balancers suit persistent connections like WebSockets; L7 suits HTTP routing",
+      "question": "A chat product keeps long-lived WebSocket connections from every client. The team is choosing a load balancer and defaults to the same L7 HTTP balancer they use for their REST API. Which layer fits better here, and why?",
+      "answer": "An L4 load balancer. It balances at the TCP connection level, cheaply maintaining each persistent connection pinned to one backend, whereas L7 balancers are built around inspecting and routing individual HTTP requests. For plain REST traffic, L7 remains the right default."
+    },
+    {
+      "id": "key-technologies-overview-15",
+      "type": "mcq2",
+      "concept": "In interviews, load balancers can stay implicit behind 'horizontally scaled'",
+      "question": "In a system design interview, a candidate is diagramming a microservices design. How should they handle load balancers on the whiteboard?",
+      "options": [
+        "Draw a load balancer box in front of every horizontally scaled service",
+        "State that scaled services sit behind load balancing and only draw one where the routing is interesting"
+      ],
+      "answer": "State that scaled services sit behind load balancing and only draw one where the routing is interesting — load balancing is assumed wherever a service is horizontally scaled, and cluttering the diagram with repeated LB boxes wastes time without adding signal."
+    },
+    {
+      "id": "key-technologies-overview-16",
+      "type": "scenario",
+      "concept": "Queues buffer bursty traffic so spikes wait instead of being dropped",
+      "question": "A flash-sale e-commerce site sees order submissions spike to 10x normal for about three minutes when a drop goes live. The fulfillment service processes at a fixed rate, so during spikes it rejects orders and customers rage-post screenshots. What should sit between order submission and fulfillment, and why?",
+      "answer": "A message queue. It absorbs the short burst by holding submitted orders while workers drain them at their steady rate, so spike traffic waits a bit instead of being dropped. This works precisely because the overload is brief and average load is within capacity."
+    },
+    {
+      "id": "key-technologies-overview-17",
+      "type": "scenario",
+      "concept": "Queues move long-running work off the synchronous request path",
+      "question": "A SaaS analytics product lets users export dashboards as PDFs. Generation takes about 60 seconds, HTTP requests time out at 30, and frustrated users hammer the button, spawning duplicate renders. How should the team restructure this feature?",
+      "answer": "Make it asynchronous: the API enqueues an export job and immediately returns a job ID, worker processes consume the queue and render the PDF, and the client polls or gets notified when it's ready. Long-running work never belongs inside a synchronous request."
+    },
+    {
+      "id": "key-technologies-overview-18",
+      "type": "scenario",
+      "concept": "Queues are wrong for latency-sensitive synchronous request/response flows",
+      "question": "A payments team must return an authorization decision to the point-of-sale terminal within 300 ms. An engineer proposes putting a message queue between the API and the authorization service 'for resilience'. Why is this the wrong place for a queue?",
+      "answer": "The caller needs a synchronous answer under a tight latency budget, and a queue adds unpredictable queuing delay with no way to wait for the response inline. Queues fit async work; a latency-sensitive request/response path should call the service directly."
+    },
+    {
+      "id": "key-technologies-overview-19",
+      "type": "scenario",
+      "concept": "A queue cannot fix chronic under-capacity — backpressure or more workers can",
+      "question": "A telemetry ingest pipeline receives a steady 500 events/sec all day, but its workers process only 200/sec. The team added a queue in front, yet the queue depth grows without bound and events are now processed hours late. Why didn't the queue help, and what actually fixes this?",
+      "answer": "A queue only smooths temporary bursts; with sustained input above processing capacity the backlog grows forever, just delaying the same overload. The real fixes are scaling out workers to match the input rate or applying backpressure to reject or slow producers."
+    },
+    {
+      "id": "key-technologies-overview-20",
+      "type": "scenario",
+      "concept": "Partition keys give per-key message ordering while allowing parallelism",
+      "question": "A ride-hailing app publishes trip lifecycle events (requested, driver_assigned, started, completed) to a partitioned queue with random partition assignment. Consumers sometimes see 'completed' before 'started' for the same trip and corrupt the trip state machine. What should change?",
+      "answer": "Use the trip ID as the partition key. All events for one trip then land on the same partition and are consumed in order, while different trips still spread across partitions for parallelism. Ordering is only guaranteed within a partition, never across them."
+    },
+    {
+      "id": "key-technologies-overview-21",
+      "type": "scenario",
+      "concept": "At-least-once delivery means consumers must be idempotent against duplicates",
+      "question": "A subscription service sends billing charges via a queue. After a worker crashed mid-task, the message was redelivered and one customer was charged twice. The queue is working as documented. What must the team change on the consumer side?",
+      "answer": "Make the consumer idempotent — for example, record a unique charge ID and skip messages already processed. Queues typically guarantee at-least-once delivery, so duplicates after crashes are expected and must be absorbed by the consumer, not prevented by the queue."
+    },
+    {
+      "id": "key-technologies-overview-22",
+      "type": "scenario",
+      "concept": "Dead letter queues quarantine poison messages after max retries",
+      "question": "An IoT platform's ingestion worker keeps crashing on one malformed device message. The queue redelivers it, the worker crashes again, and this loop has blocked the partition and flooded the logs for hours. What mechanism is missing?",
+      "answer": "A dead letter queue: after a bounded number of failed attempts, the poison message is moved to a separate DLQ instead of retrying forever. That unblocks the pipeline and preserves the bad message for alerting, inspection, and possible replay after a fix."
+    },
+    {
+      "id": "key-technologies-overview-23",
+      "type": "scenario",
+      "concept": "A skewed partition key creates a hot partition that lags",
+      "question": "A social feed pipeline partitions post-engagement events by author user ID. Whenever a celebrity posts, one consumer falls hours behind while the others sit idle, even though total throughput is well within cluster capacity. What is going wrong?",
+      "answer": "The partition key is skewed: one celebrity's ID funnels a huge share of traffic to a single hot partition, and per-partition ordering means only one consumer can drain it. Choose a higher-cardinality or compound key (e.g., author ID + shard suffix) to spread the load."
+    },
+    {
+      "id": "key-technologies-overview-24",
+      "type": "scenario",
+      "concept": "Streams differ from queues by retention, replay, and multiple consumers",
+      "question": "An analytics team discovers a bug that corrupted a week of computed metrics and wants to recompute them from the raw click events. But the events flowed through a queue that deletes each message once acknowledged, so there is nothing to reprocess. What infrastructure choice would have made this recovery possible?",
+      "answer": "A log-based stream (e.g., Kafka-style) instead of a destructive queue. Streams retain events for a configured window and let consumers rewind to any offset, so the week of clicks could simply be replayed through the fixed pipeline."
+    },
+    {
+      "id": "key-technologies-overview-25",
+      "type": "scenario",
+      "concept": "Event sourcing stores an immutable event log and derives state from it",
+      "question": "A digital wallet must prove to auditors exactly how every balance was reached and be able to reconstruct any account's balance as of any past date. Storing only the current balance per account can't do either. What pattern fits, and how does it work?",
+      "answer": "Event sourcing: persist every deposit, withdrawal, and transfer as an immutable, append-only event, and derive the current balance by folding over the events. The log itself is the audit trail, and replaying it up to any timestamp reconstructs historical state."
+    },
+    {
+      "id": "key-technologies-overview-26",
+      "type": "scenario",
+      "concept": "Separate consumer groups each get the full stream with independent offsets",
+      "question": "A fraud-detection service and an analytics warehouse loader both read the same order-events stream. Each sees only about half the events because messages one service consumes never reach the other. What is misconfigured?",
+      "answer": "Both services are in the same consumer group, so the stream's partitions are split between them as if they were one horizontally scaled app. Put each service in its own consumer group; every group then receives the full stream and tracks its own offsets independently."
+    },
+    {
+      "id": "key-technologies-overview-27",
+      "type": "mcq2",
+      "concept": "Tumbling windows are non-overlapping; sliding windows overlap",
+      "question": "An ops dashboard must report the count of checkout errors in each discrete 5-minute bucket (12:00–12:05, 12:05–12:10, ...), with every event counted in exactly one bucket. Which stream windowing type is correct?",
+      "options": [
+        "Tumbling windows",
+        "Sliding windows"
+      ],
+      "answer": "Tumbling windows — they are fixed-size and non-overlapping, so each event falls into exactly one bucket; sliding windows overlap, so events would be counted in multiple windows."
+    },
+    {
+      "id": "key-technologies-overview-28",
+      "type": "scenario",
+      "concept": "Stream partition replication tolerates broker failure",
+      "question": "A gaming company runs its event stream with a single copy of each partition to save disk. A broker's machine dies, and every event on its partitions is permanently lost, breaking downstream leaderboards. What configuration prevents a repeat, and what does it cost?",
+      "answer": "Set a replication factor of 3 so each partition's events live on multiple brokers, and a replica takes over as leader when one fails. The price is extra storage and slightly higher write latency while replicas acknowledge — the standard trade for fault tolerance."
+    },
+    {
+      "id": "key-technologies-overview-29",
+      "type": "scenario",
+      "concept": "In-process locks don't span servers — cross-server mutual exclusion needs a distributed lock",
+      "question": "A concert ticketing app wraps seat reservation in a language-level mutex, and it worked in staging. In production, with twelve app servers behind a load balancer, two users on different servers still buy the same seat. Why does the mutex fail, and what is the fix?",
+      "answer": "An in-process mutex only serializes threads inside one server; requests landing on different servers never contend on it. Cross-server mutual exclusion needs a distributed lock in a shared store (e.g., Redis or ZooKeeper) keyed on the seat, held with a TTL during checkout."
+    },
+    {
+      "id": "key-technologies-overview-30",
+      "type": "scenario",
+      "concept": "Lock expiry (TTL) prevents a crashed holder from locking a resource forever",
+      "question": "A ride-hailing matcher takes a distributed lock on a driver while offering them a trip. One matcher process crashed while holding a lock, and that driver has now been invisible to dispatch for six hours. What is missing from the lock design?",
+      "answer": "An expiry (TTL) on the lock. Since a crashed holder can never release it, the lock must auto-expire — long enough to cover the offer flow, short enough that a crash frees the driver quickly. Choosing that TTL is the core trade-off of distributed locking."
+    },
+    {
+      "id": "key-technologies-overview-31",
+      "type": "scenario",
+      "concept": "Lock acquisition must be a single atomic operation, not check-then-set",
+      "question": "A team implements a distributed lock in Redis as two steps: GET the key to check it's absent, then SET it to claim it. Under load, two schedulers routinely both believe they hold the lock. What is wrong with this implementation?",
+      "answer": "Check-then-set is a race: both processes can GET 'absent' before either SETs. Acquisition must be one atomic operation — SET with NX (set only if not exists) plus an expiry — so the store itself guarantees exactly one winner."
+    },
+    {
+      "id": "key-technologies-overview-32",
+      "type": "scenario",
+      "concept": "Acquiring multiple locks in a consistent global order prevents deadlock",
+      "question": "A banking backend locks both accounts before executing a transfer. When user A pays user B at the same moment B pays A, both transfers hang forever, each holding one account lock and waiting for the other. What design rule was violated?",
+      "answer": "Locks must be acquired in a consistent global order — e.g., always lock the lower account ID first. With a fixed ordering, the circular wait that causes deadlock cannot form; timeouts on acquisition are a backstop, not the primary fix."
+    },
+    {
+      "id": "key-technologies-overview-33",
+      "type": "scenario",
+      "concept": "Fine-grained locks preserve concurrency; one coarse lock serializes everything",
+      "question": "An auction platform guards bid placement with a single global 'bids' lock to keep updates safe. It works, but during busy evenings all auctions slow to a crawl because bids on unrelated items queue behind each other. What should change?",
+      "answer": "Narrow the lock granularity: lock per auction item, not globally. Bids on different items then proceed in parallel while bids on the same item still serialize — coarse locks are simpler but throttle throughput far more than necessary."
+    },
+    {
+      "id": "key-technologies-overview-34",
+      "type": "scenario",
+      "concept": "Single-statement atomic updates belong in a database transaction, not a distributed lock",
+      "question": "To decrement inventory safely, an e-commerce team acquires a Redis distributed lock, runs a single UPDATE stock SET count = count - 1 WHERE id = ? AND count > 0 in Postgres, then releases the lock. Is the lock earning its keep here?",
+      "answer": "No. That conditional UPDATE is already atomic inside the database's transaction machinery, so the distributed lock adds latency and a failure dependency for nothing. Distributed locks are for exclusivity that spans multiple requests or extended time (like holding a cart item), not single-statement updates."
+    },
+    {
+      "id": "key-technologies-overview-35",
+      "type": "scenario",
+      "concept": "LFU beats LRU when a stable hot set gets polluted by one-off scans",
+      "question": "A news site's cache uses LRU and normally hits well: a small set of trending articles serves most traffic. Every night a partner's crawler reads the entire archive once, flushing the trending articles out of the cache, and morning hit rates crater. Which eviction policy fits better, and why?",
+      "answer": "LFU (least frequently used). The nightly scan touches each archive article exactly once, so under LFU those one-off entries are evicted first while the frequently read trending set survives. LRU keys purely on recency, which is exactly what the scan exploits."
+    },
+    {
+      "id": "key-technologies-overview-36",
+      "type": "scenario",
+      "concept": "TTL-only cache invalidation serves stale data until expiry; event-driven invalidation keeps it fresh",
+      "question": "An online store caches product pages with a 1-hour TTL. Merchandisers complain that after they correct a price, some customers see the old price for up to an hour, occasionally forcing the store to honor a wrong price. What should the team change about invalidation?",
+      "answer": "TTL-only invalidation guarantees staleness up to the full TTL after any change. Invalidate (or update) the cache entry explicitly when the price write happens — event-driven invalidation — keeping TTL only as a safety net; alternatively shorten the TTL and accept more origin load."
+    },
+    {
+      "id": "key-technologies-overview-37",
+      "type": "scenario",
+      "concept": "Write-back caching absorbs heavy write rates at the cost of a data-loss window",
+      "question": "An IoT fleet reports device counters at 50,000 writes/sec. The current write-through cache forwards every write to the database synchronously, and database write latency now throttles the whole ingest path. Losing a few seconds of counter updates in a crash is acceptable. Which write strategy fits, and what is the trade?",
+      "answer": "Write-back: write to the cache and return immediately, flushing to the database asynchronously in batches. Writes get fast and the database sees smoothed, batched load, in exchange for a small window of data that can be lost if the cache dies before flushing — acceptable here."
+    },
+    {
+      "id": "key-technologies-overview-38",
+      "type": "scenario",
+      "concept": "Write-around caching makes writes fast but the first subsequent read a miss",
+      "question": "A catalog service uses write-around caching. After a bulk overnight import of 200,000 updated products, the morning's first page loads are noticeably slow, then everything speeds up. The team suspects a regression. What is actually happening?",
+      "answer": "This is write-around working as designed: writes go straight to the database and bypass the cache, so the first read of each updated product is a cache miss that repopulates the entry. If the morning slowdown matters, pre-warm the cache for hot products after the import."
+    },
+    {
+      "id": "key-technologies-overview-39",
+      "type": "scenario",
+      "concept": "Write-through caching keeps cache and database consistent at the cost of slower writes",
+      "question": "A banking dashboard caches account balances using write-around, so after each transaction the cached balance is stale until it expires or is re-read from the database — and users sometimes see an old balance right after a transfer. Write volume is modest, but reads must always reflect the latest write. Which cache write strategy fits, and what does it cost?",
+      "answer": "Write-through: every write updates the cache and the database together, so reads always see fresh data and the cache never drifts from the store of record. The cost is slower writes, since each one performs two synchronous updates — an easy trade at modest write volume."
+    },
+    {
+      "id": "key-technologies-overview-40",
+      "type": "scenario",
+      "concept": "Write-heavy, rarely-reread data is a poor caching candidate",
+      "question": "A chat backend writes every message into Redis 'to speed things up', but analysis shows messages are almost never read back through the cache — clients hold recent history locally. Meanwhile the cache is evicting constantly and hit rate is near zero. What should the team do?",
+      "answer": "Stop caching the messages. Caching pays off for hot, repeatedly read data; a write-heavy stream that's rarely re-read just burns memory and eviction churn for no hit-rate benefit. Write messages to the store of record and cache only genuinely hot reads."
+    },
+    {
+      "id": "key-technologies-overview-41",
+      "type": "scenario",
+      "concept": "CDN edges cache per region: first request misses to origin, later ones hit",
+      "question": "A game studio serves patch assets from a storage bucket in Virginia through a CDN. Players report that the very first download in a city each morning is slow, but every download after that in the same city is fast. Explain the pattern.",
+      "answer": "Each CDN edge keeps its own regional cache, and entries expire by TTL or get evicted during the quiet overnight hours. The first request of the day therefore misses — the edge fetches from the Virginia origin and caches the asset — and every later request in that city is served locally. A cold miss followed by fast hits, per edge, is normal CDN behavior, not a fault."
+    },
+    {
+      "id": "key-technologies-overview-42",
+      "type": "scenario",
+      "concept": "CDNs can cache identical-for-everyone API responses, not just static assets",
+      "question": "A gaming platform's global leaderboard API returns the same JSON to every user and recomputes every 60 seconds, yet millions of clients poll it and the origin fleet is drowning. The team assumes CDNs are only for images and JS files. What should they do?",
+      "answer": "Cache the API response at the CDN with a TTL of up to 60 seconds. Since the payload is identical for all users and staleness within a minute is acceptable, the vast majority of requests get absorbed at the edge and the origin serves roughly one fetch per edge per TTL."
+    },
+    {
+      "id": "key-technologies-overview-43",
+      "type": "scenario",
+      "concept": "Per-user personalized responses must not be cached at shared CDN edges",
+      "question": "To cut latency, a streaming service put its /homepage endpoint — which returns each user's personalized recommendations — behind CDN caching keyed on the URL. Users immediately began seeing strangers' watch histories. What went wrong, and what is the rule here?",
+      "answer": "The edge cached one user's personalized response and served it to everyone hitting the same URL. Per-user dynamic content must bypass the CDN (or be keyed per user, which destroys hit rates anyway); edge caching is for responses that are safely identical across users."
+    },
+    {
+      "id": "key-technologies-overview-44",
+      "type": "scenario",
+      "concept": "Content-hashed/versioned asset URLs sidestep CDN invalidation after deploys",
+      "question": "A web team deploys a critical JavaScript fix, but many users keep receiving the old bundle for hours because the CDN caches app.js with a long TTL, and manual purges are slow and error-prone. What release practice eliminates this problem?",
+      "answer": "Fingerprint the assets: serve app.<contenthash>.js so every build gets a new URL, and have the (short-TTL) HTML reference it. New deploys are picked up instantly because the new URL is never cached yet, old versions expire naturally, and long TTLs stay safe — no purging needed."
+    }
+  ]
+}

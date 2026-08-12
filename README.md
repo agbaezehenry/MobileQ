@@ -72,7 +72,7 @@ quietly dropped.
 ```
 index.html      app shell + iOS meta tags
 styles.css      chalkboard styling
-app.js          swipe gesture, queue, scoring, summary, Ask chat
+app.js          swipe gesture, queue, scoring, summary, Ask chat, marking, voice
 fsrs.js         FSRS-5 scheduler + the per-card memory it runs on
 questions.js    the question bank — edit this, nothing else
 manifest.json   PWA manifest
@@ -114,12 +114,13 @@ something fast mode skated past.
 ## Written cards
 
 Some cards have no left and no right. The rails go dark, the card grows a text box, and the
-controls become **Skip** and **Submit answer** — you have to produce the thing rather than
-recognise it, which is the difference between having read about NRR and being able to say
-what 118% means when somebody asks.
+controls become **Skip**, **Speak** and **Submit** — you have to produce the thing rather
+than recognise it, which is the difference between having read about NRR and being able to
+say what 118% means when somebody asks.
 
 What you write is marked against the `answer` the card ships with. The verdict sheet then
-shows your answer, one line of feedback, the model answer, and the usual explanation.
+shows your answer, one line of feedback, a point-by-point checklist of what the answer had
+to say, the model answer, and the usual explanation.
 
 Marks are **right**, **half**, or **wrong**. Half is not a consolation prize: it schedules
 exactly like a miss (back in 2 minutes, and it counts toward the three-miss park), and it is
@@ -127,6 +128,42 @@ excluded from the accuracy figure on the summary — it just grades **Hard** rat
 **Again** in FSRS, because half-remembering is evidence of a weak memory rather than none.
 
 On a keyboard, `Enter` is a newline and **⌘/Ctrl + Enter** submits.
+
+### Speaking your answer
+
+Thumb-typing three sentences of reasoning is enough friction to make you skip the card, which
+defeats the point of having written cards at all. **Speak** streams what you say into the box
+instead: transcript arrives while you are still talking, and you tap **Stop** when you're done.
+
+It is only ever an input method. The text is yours to edit before you submit, and the grader
+gets the same string either way — nothing about the card, the marking or the schedule knows
+it was spoken. Anything already in the box is kept, so you can type a first line and dictate
+the rest.
+
+Tapping **Submit** mid-sentence stops the mic and hands it back rather than submitting: half a
+transcript is not an answer, and the tail arrives a beat after you stop talking. Tap it again
+once you've read it over.
+
+#### The transcription call
+
+`gpt-live-transcribe` over OpenAI's realtime endpoint —
+`wss://api.openai.com/v1/realtime?intent=transcription` — configured for manual turns
+(`turn_detection: null`), so a considered answer isn't chopped at every pause. One commit goes
+out when you tap Stop.
+
+Audio is captured with an `AudioWorklet` at 24 kHz, converted to little-endian PCM16, and sent
+base64-encoded in `input_audio_buffer.append` frames of about 100 ms. The `AudioContext` is
+asked for 24 kHz and normally obliges; if a browser refuses, the samples are box-averaged down
+rather than decimated. Transcript arrives as
+`conversation.item.input_audio_transcription.delta` and `.completed` events, tracked per
+`item_id` so a completed transcript replaces the deltas that built it — that's how corrections
+land mid-sentence.
+
+The whole thing lives under the `VOICE —` banner in `app.js`. It needs a secure origin for
+microphone access, which GitHub Pages and `localhost` both give you; on a plain-HTTP host the
+mic button reports that the browser can't capture audio.
+
+Costs $0.017 per minute of audio, billed to your OpenAI account.
 
 ### The marking call
 
@@ -136,10 +173,32 @@ judging whether the substance matches. That is a small job, and a card that stal
 five seconds behind Opus would be worse than no marking at all.
 
 The reply is pinned with [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
-to `{verdict, feedback}`, so there is no prose to parse and no way to come back with a mark
-the app cannot read. The prompt tells it to mark on substance: a terser answer than the
-reference is still correct, and nothing is expected that the question did not ask for.
-It lives under the `THE GRADER` banner in `app.js`.
+to `{points, verdict, feedback}`, so there is no prose to parse and no way to come back with a
+mark the app cannot read. It lives under the `THE GRADER` banner in `app.js`.
+
+The mark is made point by point rather than in one judgement. Nearly every written card ships
+a `keyPoints` checklist, so marking is mostly a lookup: for each point, did you get it across,
+and what in your answer says so. Each point comes back `demonstrated`, `partial`, `missing` or
+`contradicted`, and the verdict follows from that pass.
+
+The order in the schema is load-bearing. Structured outputs fill fields in the order they are
+declared, so a checklist above the verdict is the model working out its answer, while the same
+checklist below the verdict is a justification written to fit a mark already chosen. You get
+the same list on the sheet, which is what turns "half way" into something you can act on.
+
+The prompt is lenient about wording and strict about understanding: synonyms, paraphrase and a
+far terser answer than the reference all count, and nothing is expected that the question did
+not ask for — but an answer vague enough to be read several ways has not said the thing, and a
+claim that contradicts a point caps the mark below correct.
+
+Each point also carries an `evidence` string — the few words of your answer that decided its
+status. Nothing displays it. It is there because making the model point at the words that
+earned a tick is what stops a vague answer being credited with an idea it only gestured at.
+
+Two things the grader is deliberately **not** asked for. A 0–100 score: there are three
+outcomes in the schedule and nowhere for a 73 to go, and the model cannot hold that precision
+anyway. And a "should this come back" flag: FSRS already decides that from the verdict and how
+long you took, and a second opinion that loses would only be noise.
 
 ### Without a key
 
@@ -354,32 +413,39 @@ The chat also gets the context of a written card: what you wrote and how it was 
 "was I close, or thinking about it wrong?" is a question it can actually answer — including
 by disagreeing with the mark if you make a fair case.
 
-### It needs your own API key
+### It needs your own API keys
 
-The same key does both jobs: chatting about a card, and [marking written answers](#the-marking-call).
-This is a static site with no backend, so there is nowhere to hide a server-side secret.
+This is a static site with no backend, so there is nowhere to hide a server-side secret. Two
+keys, both optional, each doing its own job:
 
-It is asked for **at the top of a run**, before the first card, rather than the first time
-you reach for Ask — that moment is always mid-thought about a question, and paying attention
-to a key field there means losing the thread. The prompt is skippable (**Start without it**);
-the deck itself needs nothing. Skipping is remembered for that page load, so it asks once per
-launch and never twice in a sitting. Once a key is stored the prompt stops appearing, and the
-start screen grows a **replace** link for changing it later.
+| Key | Stored as | Powers | Sent to |
+| --- | --- | --- | --- |
+| **Anthropic** | `metric-board.anthropic-key` | the **Ask** chat, and [marking written answers](#the-marking-call) | `api.anthropic.com` |
+| **OpenAI** | `metric-board.openai-key` | [speaking a written answer](#speaking-your-answer) | `api.openai.com` |
 
-The key is:
+They are asked for **at the top of a run**, before the first card, rather than the first time
+you reach for a feature that needs one — that moment is always mid-thought about a question,
+and paying attention to a key field there means losing the thread. The prompt is skippable
+(**Start without them**); the deck itself needs neither. Skipping is remembered for that page
+load, so it asks once per launch and never twice in a sitting. The start screen keeps a
+**manage** link for changing them later, and tapping the mic with no OpenAI key stored opens
+the same dialog.
 
-- stored in that browser's `localStorage` under `metric-board.anthropic-key`
-- sent to `api.anthropic.com` and nowhere else
-- **never committed** — it lives on the device, not in this repo
-
-Get one at [console.anthropic.com](https://console.anthropic.com) → API keys. Usage bills to
-that account. There's a **Forget key** link at the bottom of the panel.
+Neither key is ever committed — they live on the device, not in this repo. Get them at
+[console.anthropic.com](https://console.anthropic.com) → API keys and
+[platform.openai.com](https://platform.openai.com) → API keys; usage bills to those accounts.
+**Forget the stored keys** at the bottom of the dialog clears both.
 
 The tradeoff to be aware of: a key in `localStorage` is readable by anything running on this
 origin and by anyone holding the unlocked phone. That's an acceptable deal for a personal
 drill on your own device. It is *not* the right model if you hand this URL to other people —
-for that, put a proxy (a Cloudflare Worker holding the key as a secret) in front of the API
-and point `ASK_URL` in `app.js` at it instead.
+for that, put a proxy (a Cloudflare Worker holding the keys as secrets) in front of both APIs
+and point `ASK_URL` and `VOICE_URL` in `app.js` at it instead.
+
+The voice key deserves one extra note, because OpenAI names the mechanism honestly: a browser
+cannot set headers on a WebSocket, so the key is passed as the subprotocol
+`openai-insecure-api-key.<key>`. Their docs say to use a short-lived token minted by your own
+server, which is the right answer the moment this stops being a personal build.
 
 ### The call
 
@@ -390,8 +456,9 @@ bubble. Browser calls are opted into CORS with the `anthropic-dangerous-direct-b
 header. All of it lives under the `ASK —` banner in `app.js`, behind one `askStream()`
 function — swap that one function to move to a proxy.
 
-Offline, the deck still works: Ask reports that it can't reach the API, and written cards
-[fall back to self-marking](#without-a-key).
+Offline, the deck still works: Ask reports that it can't reach the API, written cards
+[fall back to self-marking](#without-a-key), and the mic says it couldn't reach the
+transcriber — whatever it had already put in the box stays there.
 
 ---
 

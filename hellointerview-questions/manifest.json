@@ -1,0 +1,357 @@
+{
+  "title": "Hello Interview System Design \u2014 Scenario Question Banks",
+  "source": "https://www.hellointerview.com/learn/system-design",
+  "sections": {
+    "core-concepts": [
+      {
+        "subsection": "API Design",
+        "file": "core-concepts/api-design.json",
+        "questions": 33,
+        "types": {
+          "scenario": 28,
+          "true_false": 3,
+          "mcq2": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/api-design"
+      },
+      {
+        "subsection": "Caching",
+        "file": "core-concepts/caching.json",
+        "questions": 32,
+        "types": {
+          "scenario": 30,
+          "true_false": 1,
+          "mcq2": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/caching"
+      },
+      {
+        "subsection": "CAP Theorem",
+        "file": "core-concepts/cap-theorem.json",
+        "questions": 33,
+        "types": {
+          "scenario": 24,
+          "mcq2": 6,
+          "true_false": 3
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/cap-theorem"
+      },
+      {
+        "subsection": "Consistent Hashing",
+        "file": "core-concepts/consistent-hashing.json",
+        "questions": 29,
+        "types": {
+          "scenario": 24,
+          "mcq2": 2,
+          "true_false": 3
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/consistent-hashing"
+      },
+      {
+        "subsection": "Core Concepts Overview",
+        "file": "core-concepts/core-concepts-overview.json",
+        "questions": 34,
+        "types": {
+          "scenario": 31,
+          "mcq2": 2,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/core-concepts"
+      },
+      {
+        "subsection": "Data Modeling",
+        "file": "core-concepts/data-modeling.json",
+        "questions": 38,
+        "types": {
+          "scenario": 35,
+          "true_false": 2,
+          "mcq2": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/data-modeling"
+      },
+      {
+        "subsection": "Database Indexing",
+        "file": "core-concepts/db-indexing.json",
+        "questions": 34,
+        "types": {
+          "scenario": 31,
+          "mcq2": 1,
+          "true_false": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/db-indexing"
+      },
+      {
+        "subsection": "Networking Essentials",
+        "file": "core-concepts/networking-essentials.json",
+        "questions": 42,
+        "types": {
+          "scenario": 37,
+          "true_false": 5
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/networking-essentials"
+      },
+      {
+        "subsection": "Numbers to Know",
+        "file": "core-concepts/numbers-to-know.json",
+        "questions": 32,
+        "types": {
+          "scenario": 30,
+          "true_false": 1,
+          "mcq2": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/numbers-to-know"
+      },
+      {
+        "subsection": "Sharding",
+        "file": "core-concepts/sharding.json",
+        "questions": 38,
+        "types": {
+          "scenario": 34,
+          "mcq2": 3,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/sharding"
+      }
+    ],
+    "patterns": [
+      {
+        "subsection": "Dealing with Contention",
+        "file": "patterns/dealing-with-contention.json",
+        "questions": 29,
+        "types": {
+          "true_false": 1,
+          "scenario": 26,
+          "mcq2": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/dealing-with-contention"
+      },
+      {
+        "subsection": "Handling Large Blobs",
+        "file": "patterns/large-blobs.json",
+        "questions": 32,
+        "types": {
+          "scenario": 30,
+          "true_false": 1,
+          "mcq2": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/large-blobs"
+      },
+      {
+        "subsection": "Managing Long Running Tasks",
+        "file": "patterns/long-running-tasks.json",
+        "questions": 34,
+        "types": {
+          "scenario": 31,
+          "true_false": 2,
+          "mcq2": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/long-running-tasks"
+      },
+      {
+        "subsection": "Multi-step Processes",
+        "file": "patterns/multi-step-processes.json",
+        "questions": 28,
+        "types": {
+          "scenario": 28
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/multi-step-processes"
+      },
+      {
+        "subsection": "Patterns Overview",
+        "file": "patterns/patterns-overview.json",
+        "questions": 27,
+        "types": {
+          "scenario": 25,
+          "mcq2": 1,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/patterns"
+      },
+      {
+        "subsection": "Real-time Updates",
+        "file": "patterns/realtime-updates.json",
+        "questions": 35,
+        "types": {
+          "scenario": 33,
+          "mcq2": 1,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/realtime-updates"
+      },
+      {
+        "subsection": "Scaling Reads",
+        "file": "patterns/scaling-reads.json",
+        "questions": 31,
+        "types": {
+          "scenario": 28,
+          "mcq2": 2,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/scaling-reads"
+      },
+      {
+        "subsection": "Scaling Writes",
+        "file": "patterns/scaling-writes.json",
+        "questions": 28,
+        "types": {
+          "scenario": 27,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/patterns/scaling-writes"
+      }
+    ],
+    "key-technologies": [
+      {
+        "subsection": "API Gateway",
+        "file": "key-technologies/api-gateway.json",
+        "questions": 39,
+        "types": {
+          "scenario": 33,
+          "true_false": 2,
+          "mcq2": 4
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/api-gateway"
+      },
+      {
+        "subsection": "Cassandra",
+        "file": "key-technologies/cassandra.json",
+        "questions": 37,
+        "types": {
+          "scenario": 35,
+          "true_false": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/cassandra"
+      },
+      {
+        "subsection": "DynamoDB",
+        "file": "key-technologies/dynamodb.json",
+        "questions": 36,
+        "types": {
+          "scenario": 33,
+          "mcq2": 2,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/dynamodb"
+      },
+      {
+        "subsection": "Elasticsearch",
+        "file": "key-technologies/elasticsearch.json",
+        "questions": 41,
+        "types": {
+          "scenario": 36,
+          "true_false": 2,
+          "mcq2": 3
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/elasticsearch"
+      },
+      {
+        "subsection": "Flink",
+        "file": "key-technologies/flink.json",
+        "questions": 33,
+        "types": {
+          "scenario": 28,
+          "mcq2": 3,
+          "true_false": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/flink"
+      },
+      {
+        "subsection": "Kafka",
+        "file": "key-technologies/kafka.json",
+        "questions": 39,
+        "types": {
+          "scenario": 36,
+          "mcq2": 2,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/kafka"
+      },
+      {
+        "subsection": "Key Technologies Overview",
+        "file": "key-technologies/key-technologies-overview.json",
+        "questions": 44,
+        "types": {
+          "scenario": 41,
+          "mcq2": 3
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/key-technologies"
+      },
+      {
+        "subsection": "PostgreSQL",
+        "file": "key-technologies/postgres.json",
+        "questions": 35,
+        "types": {
+          "true_false": 2,
+          "scenario": 33
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/postgres"
+      },
+      {
+        "subsection": "Redis",
+        "file": "key-technologies/redis.json",
+        "questions": 40,
+        "types": {
+          "true_false": 4,
+          "scenario": 33,
+          "mcq2": 3
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/redis"
+      },
+      {
+        "subsection": "ZooKeeper",
+        "file": "key-technologies/zookeeper.json",
+        "questions": 30,
+        "types": {
+          "scenario": 27,
+          "true_false": 1,
+          "mcq2": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/zookeeper"
+      }
+    ],
+    "advanced-topics": [
+      {
+        "subsection": "Data Structures for Big Data",
+        "file": "advanced-topics/data-structures-for-big-data.json",
+        "questions": 36,
+        "types": {
+          "scenario": 34,
+          "true_false": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/data-structures-for-big-data"
+      },
+      {
+        "subsection": "Proximity Search",
+        "file": "advanced-topics/proximity-search.json",
+        "questions": 31,
+        "types": {
+          "scenario": 31
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/proximity-search"
+      },
+      {
+        "subsection": "Time Series Databases",
+        "file": "advanced-topics/time-series-databases.json",
+        "questions": 41,
+        "types": {
+          "scenario": 36,
+          "true_false": 3,
+          "mcq2": 2
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/time-series-databases"
+      },
+      {
+        "subsection": "Vector Databases",
+        "file": "advanced-topics/vector-databases.json",
+        "questions": 40,
+        "types": {
+          "scenario": 39,
+          "true_false": 1
+        },
+        "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/vector-databases"
+      }
+    ]
+  },
+  "total_questions": 1111,
+  "total_subsections": 32
+}

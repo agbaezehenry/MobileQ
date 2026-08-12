@@ -9,7 +9,7 @@
        phones that already installed the app will keep serving the old copy.
    ============================================================================= */
 
-const CACHE_VERSION = 'chalkboard-v7';
+const CACHE_VERSION = 'chalkboard-v9';
 
 const SHELL = [
   './',

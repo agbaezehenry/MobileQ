@@ -1,0 +1,286 @@
+{
+  "section": "patterns",
+  "subsection": "Managing Long Running Tasks",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/long-running-tasks",
+  "concepts": [
+    "LB/gateway timeout ceiling on synchronous requests",
+    "Web-tier thread/connection exhaustion from slow synchronous work",
+    "Timeout-driven client retries duplicating expensive work",
+    "Two-phase design: validate, enqueue, return job ID immediately",
+    "Job status table as the system of record for job state",
+    "Persist the job record before enqueueing to avoid the message-before-row race",
+    "Independent scaling of the web tier and the worker fleet",
+    "Fault isolation between workers and the user-facing API",
+    "The queue as a burst-absorbing buffer decoupling arrival from processing rate",
+    "Async acceptance means eventual consistency — completion and failure must be surfaced",
+    "Heuristic: keep sub-second work synchronous instead of reflexively queueing",
+    "Choosing a managed queue (SQS) vs Kafka for job dispatch",
+    "Worker compute choice: containers for long steady work vs serverless for short bursty work",
+    "Raising timeouts is not a fix — minutes-long work is the design-time signal for async",
+    "Visibility timeout redelivery as built-in crash recovery",
+    "Visibility timeout must exceed job duration or live jobs get redelivered",
+    "Delete the queue message only after the work is done — ack-on-receipt loses jobs on crash",
+    "Checkpointing long jobs so a retry resumes instead of restarting from zero",
+    "Exponential backoff with jitter for transient dependency failures",
+    "Poison messages handled by max receive count plus a dead-letter queue",
+    "DLQ semantics: parked for inspection and deliberate replay, not automatic retry",
+    "At-least-once delivery requires idempotent handlers",
+    "Atomic job claim via conditional update — naive check-then-act still races",
+    "Queue depth and oldest-message age as the scaling signal, not worker CPU",
+    "Admission control when the worker fleet cannot scale further",
+    "Head-of-line blocking when mixed workloads share one queue",
+    "Separate queues with dedicated pools vs a priority field on a shared queue",
+    "Splitting one huge bulk job into many small tasks for parallelism and small retry blast radius",
+    "Workflow orchestrators for multi-step job dependencies instead of ad hoc chaining",
+    "Delivering progress to clients: sane polling cadence vs push over WebSockets/SSE",
+    "The async pattern increases system complexity as its deliberate cost",
+    "Cheap validation belongs in the synchronous accept phase",
+    "Job results go to shared durable storage referenced by the job record, not worker-local disk",
+    "Pending jobs must live in a durable external queue, not in-process memory"
+  ],
+  "question_count": 34,
+  "questions": [
+    {
+      "id": "long-running-tasks-01",
+      "type": "scenario",
+      "concept": "LB/gateway timeout ceiling on synchronous requests",
+      "question": "A SaaS analytics dashboard lets customers export a year of data as a PDF. The export endpoint does all the work inside the request handler and takes about two minutes, while the load balancer in front of the app has a 60-second idle timeout. Every export now ends in a 504 in the browser, even though server logs show the export code finishing successfully a minute later. What is going wrong?",
+      "answer": "The work outlasts the load balancer's timeout, so the connection is cut before the handler returns — the request fails even though the work succeeds. Minutes-long work cannot be held inside a request; it must become an async job: enqueue, return a job ID immediately, and finish on background workers."
+    },
+    {
+      "id": "long-running-tasks-02",
+      "type": "scenario",
+      "concept": "Web-tier thread/connection exhaustion from slow synchronous work",
+      "question": "An e-commerce platform runs merchant catalog imports synchronously on the same web servers that serve product pages. Whenever a few large imports are running, ordinary shoppers see slow loads and timeouts on pages that normally return in 50ms. What is happening?",
+      "answer": "The long imports pin web-server threads and connections for minutes, starving the shared pool that fast requests depend on — a handful of heavy requests degrades everyone. Heavy work belongs on a separate worker fleet fed by a queue so the web tier only ever does quick request handling."
+    },
+    {
+      "id": "long-running-tasks-03",
+      "type": "scenario",
+      "concept": "Timeout-driven client retries duplicating expensive work",
+      "question": "A fintech app generates year-end tax packets through a synchronous endpoint. When generation runs long, the request times out, users click Generate again, and some customers end up with three duplicate packets emailed to them. What design flaw does the duplication reveal?",
+      "answer": "Timeouts plus user retries restart the same expensive work from scratch on every attempt, and synchronous processing gives no handle to deduplicate on. Accept the request once as a tracked job with an ID; a retry then maps to the existing job instead of spawning new work."
+    },
+    {
+      "id": "long-running-tasks-04",
+      "type": "scenario",
+      "concept": "Two-phase design: validate, enqueue, return job ID immediately",
+      "question": "A creator video platform is designing its post-upload flow. Transcoding takes 10-30 minutes, and the team is debating what the 'start processing' API call should actually do before it responds to the client. What should that endpoint do, and what should it return?",
+      "answer": "Validate the request, persist a job record, push a message onto the queue, and return the job ID — all within milliseconds. The transcoding itself happens later on workers pulling from the queue, and the client tracks it through the job ID."
+    },
+    {
+      "id": "long-running-tasks-05",
+      "type": "scenario",
+      "concept": "Job status table as the system of record for job state",
+      "question": "A ticketing company moved bulk refunds for cancelled events behind a message queue. Refunds now process reliably, but support agents cannot answer 'did my refund batch finish?' — the only trace of a job is its queue message, which vanishes once a worker consumes it. What component is missing?",
+      "answer": "A job status record in a database: created at submission and updated by workers through pending, running, completed, or failed, with a pointer to results, exposed via a status endpoint. The queue is transport, not a system of record."
+    },
+    {
+      "id": "long-running-tasks-06",
+      "type": "scenario",
+      "concept": "Persist the job record before enqueueing to avoid the message-before-row race",
+      "question": "A food-delivery app's data-export feature first enqueues the job message and then inserts the job row into the database. Occasionally a worker grabs the message so quickly that its 'mark as running' update finds no row, and users who poll right after submitting get a 404. What should the team change?",
+      "answer": "Reverse the order: commit the job record first, then enqueue the message. A message must never exist before the row it references, or workers and pollers race against a record that isn't there yet."
+    },
+    {
+      "id": "long-running-tasks-07",
+      "type": "scenario",
+      "concept": "Independent scaling of the web tier and the worker fleet",
+      "question": "A gaming studio computes end-of-season reward bundles for millions of players. Under the old synchronous design they had to triple the entire web fleet at each season boundary even though normal API traffic stayed flat. Now the computation runs behind a queue with dedicated workers. How should their scaling approach change?",
+      "answer": "Scale the worker fleet on queue backlog, independently of the web tier — API servers stay sized for request traffic while workers grow and shrink with job volume. Decoupling the two tiers' scaling is a core gain of the pattern."
+    },
+    {
+      "id": "long-running-tasks-08",
+      "type": "scenario",
+      "concept": "Fault isolation between workers and the user-facing API",
+      "question": "An IoT platform compiles customer firmware images. Previously, a compiler bug that OOM-killed the process would take an API server down with it. Since moving compilation onto queue-fed workers, the same crash kills only one worker, the message reappears, and another worker finishes the build — the API never blips. Which benefit of the async pattern is this demonstrating?",
+      "answer": "Fault isolation: worker failures are contained to the worker fleet, and the job survives in the queue for redelivery, so user-facing availability is untouched by processing crashes."
+    },
+    {
+      "id": "long-running-tasks-09",
+      "type": "scenario",
+      "concept": "The queue as a burst-absorbing buffer decoupling arrival from processing rate",
+      "question": "A social app resizes uploaded photos through a queue and a worker pool sized for average load. During a festival, uploads spike to ten times normal; nothing errors and no uploads are lost — processing simply lags by a few minutes until the spike passes. What role is the queue playing here?",
+      "answer": "It is a buffer decoupling arrival rate from processing rate: bursts accumulate as backlog instead of overloading anything, and workers drain it at their own pace. Absorbing spikes without dropping work is one of the pattern's core gains."
+    },
+    {
+      "id": "long-running-tasks-10",
+      "type": "scenario",
+      "concept": "Async acceptance means eventual consistency — completion and failure must be surfaced",
+      "question": "A workspace chat product lets admins bulk-invite users; the API enqueues the job and instantly shows a success toast. An admin invites 500 people and moves on — but the job later dies on a bad SSO config, and nobody notices for a week. What did the team overlook?",
+      "answer": "An async acceptance means 'accepted', not 'done' — the system became eventually consistent, so completion and failure must be surfaced explicitly through status UI, notifications, or alerts. Returning success at enqueue time and never closing the loop hides failures."
+    },
+    {
+      "id": "long-running-tasks-11",
+      "type": "scenario",
+      "concept": "Heuristic: keep sub-second work synchronous instead of reflexively queueing",
+      "question": "A startup adopted a 'queue everything' rule, so even a profile-name update — a single 20ms database write — now goes through a queue, a worker, and a client-side polling loop before the UI can display the new name. What is wrong with this architecture?",
+      "answer": "Async is the wrong tool for sub-second work: synchronous handling is simpler, returns the result immediately, and provides natural backpressure. Queues should be reserved for work too long to hold a request open — queueing everything adds latency and infrastructure for nothing."
+    },
+    {
+      "id": "long-running-tasks-12",
+      "type": "scenario",
+      "concept": "Choosing a managed queue (SQS) vs Kafka for job dispatch",
+      "question": "A three-person team building an image-thumbnail pipeline is debating between Kafka and a managed queue like SQS for dispatching jobs to workers. They need per-message retries, a dead-letter path for bad messages, and minimal operational burden; they do not need replay or strict ordering. Which fits better here, and why?",
+      "answer": "SQS: it is fully managed and provides at-least-once delivery, visibility timeouts, receive-count tracking, and native dead-letter queues out of the box. Kafka earns its operational cost only when you need very high throughput, partition ordering, or replayable history — none of which this team needs."
+    },
+    {
+      "id": "long-running-tasks-13",
+      "type": "scenario",
+      "concept": "Worker compute choice: containers for long steady work vs serverless for short bursty work",
+      "question": "A media company runs two background workloads: film-length video renders taking 3-4 hours each, and thumbnail jobs taking about two seconds that arrive in unpredictable bursts. They must pick compute for each. What should they choose, and why?",
+      "answer": "Containers for the renders — serverless functions like Lambda cap execution around 15 minutes, and long steady work suits a persistent fleet. Lambda fits the thumbnails: short tasks with spiky arrival get instant scale-out with no idle servers."
+    },
+    {
+      "id": "long-running-tasks-14",
+      "type": "scenario",
+      "concept": "Raising timeouts is not a fix — minutes-long work is the design-time signal for async",
+      "question": "A ride-hailing company is designing a GDPR 'download my data' feature that gathers records from a dozen services and takes several minutes. A junior engineer proposes keeping it synchronous and simply raising the gateway timeout to ten minutes. Why is that the wrong call?",
+      "answer": "Minutes-long work is the textbook trigger for the async job pattern — raising the timeout just relocates the failure cliff while still pinning connections and server resources for minutes, and it does nothing for crashes or client retries. Accept it as a job with an ID and process it on workers."
+    },
+    {
+      "id": "long-running-tasks-15",
+      "type": "scenario",
+      "concept": "Visibility timeout redelivery as built-in crash recovery",
+      "question": "An e-commerce order system generates invoices on workers reading from SQS. During a deploy, a worker was killed halfway through a job, yet the invoice appeared a minute later with no human intervention and no resubmission. What mechanism made that happen?",
+      "answer": "The visibility timeout: an in-flight SQS message is hidden, not deleted, and when the dead worker never acknowledged it, the message became visible again and another worker processed it. That redelivery loop is the pattern's built-in crash recovery."
+    },
+    {
+      "id": "long-running-tasks-16",
+      "type": "scenario",
+      "concept": "Visibility timeout must exceed job duration or live jobs get redelivered",
+      "question": "A data platform's ETL jobs take about ten minutes each, and the team left the queue's visibility timeout at its 30-second default. Nearly every job is now processed by several workers at once, and results get written multiple times. What is going wrong?",
+      "answer": "Each message reappears after 30 seconds while the first worker is still mid-job, so other workers pick up what looks like a stalled message. Set the visibility timeout beyond worst-case job duration, or heartbeat to extend it, so redelivery only happens on genuine failures."
+    },
+    {
+      "id": "long-running-tasks-17",
+      "type": "scenario",
+      "concept": "Delete the queue message only after the work is done — ack-on-receipt loses jobs on crash",
+      "question": "A logistics company's workers pull route-optimization jobs from SQS. Worried about duplicate processing, a developer changed the workers to delete each message from the queue the moment it is received, before starting the multi-minute computation. Last week a spot instance was reclaimed mid-computation and that job simply vanished — never completed, never retried. Why did the queue's crash recovery not kick in?",
+      "answer": "Deleting the message on receipt throws away the queue's safety net: redelivery only works while the message still exists, so the change traded at-least-once for at-most-once and a mid-job crash now loses the job permanently. Delete the message only after the work is finished and the result recorded — the visibility timeout already hides it from other workers while the job runs, and idempotency absorbs the rare redelivery."
+    },
+    {
+      "id": "long-running-tasks-18",
+      "type": "scenario",
+      "concept": "Checkpointing long jobs so a retry resumes instead of restarting from zero",
+      "question": "A cloud backup service runs multi-hour archive jobs that copy millions of files per customer. When a worker dies at hour three, the queue redelivers the message and the next worker starts the whole archive over from file one — the largest accounts have never completed a backup because something always fails before the end. What should the workers persist, and why does it change the outcome?",
+      "answer": "Durable checkpoints of progress — for example, the last file or batch completed, recorded in the job record as the job runs — so a redelivered job resumes from the checkpoint instead of from zero. Without checkpoints the cost of a retry grows with job length and the longest jobs can fail forever; with them, each attempt only risks the work done since the last checkpoint."
+    },
+    {
+      "id": "long-running-tasks-19",
+      "type": "scenario",
+      "concept": "Exponential backoff with jitter for transient dependency failures",
+      "question": "A newsletter platform's send-workers call a third-party email API. When that API has a brief outage, the workers retry every failed call immediately in a tight loop, and the provider responds by rate-limiting the platform even harder, prolonging the outage. How should the retry behavior change?",
+      "answer": "Retry with exponential backoff plus jitter — increasingly spaced attempts give the struggling dependency room to recover, and the jitter staggers the fleet so retries don't land in synchronized waves. Tight-loop immediate retries turn a blip into a self-inflicted, extended outage."
+    },
+    {
+      "id": "long-running-tasks-20",
+      "type": "scenario",
+      "concept": "Poison messages handled by max receive count plus a dead-letter queue",
+      "question": "An IoT ingestion pipeline hits a malformed device message that crashes the worker parsing it. The queue redelivers it, the next worker crashes too, and the cycle repeats endlessly, burning worker capacity. What should the team add?",
+      "answer": "A dead-letter queue wired to a max receive count: after N failed deliveries, the poison message is automatically moved aside instead of cycling forever. Alert on DLQ depth and inspect the parked messages offline."
+    },
+    {
+      "id": "long-running-tasks-21",
+      "type": "true_false",
+      "concept": "DLQ semantics: parked for inspection and deliberate replay, not automatic retry",
+      "question": "Messages that land in a dead-letter queue are automatically retried until they eventually succeed.",
+      "answer": "False — a dead-letter queue is a parking lot for messages that already exhausted their retries; they sit there for humans to inspect, fix the underlying cause, and deliberately replay. Nothing consumes a DLQ automatically."
+    },
+    {
+      "id": "long-running-tasks-22",
+      "type": "scenario",
+      "concept": "At-least-once delivery requires idempotent handlers",
+      "question": "A payroll product runs payout jobs from a queue the vendor documents as 'guaranteed at-least-once delivery.' Rarely, an employee is paid twice for the same run even though the job was only ever submitted once. Why does this happen, and what is the fix?",
+      "answer": "At-least-once means occasional duplicate delivery by design — after a crash or timeout, the same message can reach two workers. The handler must be idempotent: record an idempotency key such as the payout ID transactionally, and skip work that has already been performed."
+    },
+    {
+      "id": "long-running-tasks-23",
+      "type": "scenario",
+      "concept": "Atomic job claim via conditional update — naive check-then-act still races",
+      "question": "A ticketing platform saw duplicate confirmation emails, so workers now read the job row and skip processing if status is already 'running.' Duplicates still slip through when two workers receive the same message within milliseconds of each other. Why does the check fail, and what fixes it?",
+      "answer": "It is a check-then-act race: both workers read 'pending' before either writes 'running.' Claim the job atomically — a conditional update like SET status='running' WHERE id=? AND status='pending' — and only proceed if your update actually changed the row."
+    },
+    {
+      "id": "long-running-tasks-24",
+      "type": "scenario",
+      "concept": "Queue depth and oldest-message age as the scaling signal, not worker CPU",
+      "question": "A B2B SaaS company gets complaints that data exports finish hours late on certain days, yet its dashboards show worker CPU and memory perfectly healthy the whole time. What metric is the team missing, and what should it drive?",
+      "answer": "Queue depth and the age of the oldest message — backlog is the real signal that consumers are not keeping up, and worker autoscaling should key off it. Healthy per-worker CPU says nothing about how long jobs wait in line."
+    },
+    {
+      "id": "long-running-tasks-25",
+      "type": "scenario",
+      "concept": "Admission control when the worker fleet cannot scale further",
+      "question": "During a stadium on-sale, a ticketing system's job queue grows without bound even with the worker fleet at its maximum size, and jobs run hours after submission. Scaling workers further is not an option. What should the team do at the front of the system?",
+      "answer": "Apply admission control: rate-limit or reject new job submissions so the backlog stops growing past what workers can drain. When consumers are maxed out, backpressure must be pushed to producers — an unbounded queue just converts overload into unbounded latency."
+    },
+    {
+      "id": "long-running-tasks-26",
+      "type": "scenario",
+      "concept": "Head-of-line blocking when mixed workloads share one queue",
+      "question": "A photo app pushes both avatar thumbnails (about 100ms each) and full video renders (30+ minutes each) through one shared queue and worker pool. During render backlogs, users complain that a newly uploaded avatar takes an hour to appear. What is going wrong?",
+      "answer": "Head-of-line blocking: the fast jobs sit behind long ones because every worker is tied up with renders. Split the job classes into separate queues with their own worker pools so cheap, latency-sensitive work never waits behind heavy work."
+    },
+    {
+      "id": "long-running-tasks-27",
+      "type": "mcq2",
+      "concept": "Separate queues with dedicated pools vs a priority field on a shared queue",
+      "question": "A marketplace runs urgent background jobs (payment receipts) and bulk jobs (weekly seller analytics) through its async system. Which design keeps the urgent jobs consistently fast?",
+      "options": [
+        "One shared queue and worker pool, with a priority field on each message",
+        "Separate queues per job class, each with its own dedicated worker pool"
+      ],
+      "answer": "Separate queues per job class, each with its own dedicated worker pool — plain queues like SQS will not reorder on a priority field, and even where priorities exist, a shared pool lets bulk jobs occupy every worker; reserved capacity per class is what actually protects urgent latency."
+    },
+    {
+      "id": "long-running-tasks-28",
+      "type": "scenario",
+      "concept": "Splitting one huge bulk job into many small tasks for parallelism and small retry blast radius",
+      "question": "A marketing platform models a 2-million-recipient email campaign as a single queue message that one worker processes end to end. Campaigns take hours because only one worker can ever work on one, and a crash near the end triggers a redelivery that re-sends to almost everyone. How should the job be structured instead?",
+      "answer": "Fan the campaign out into many small tasks — for example, one message per batch of recipients — so the whole worker fleet processes it in parallel and a failed task retries only its own small slice. A parent job record aggregates completion across the child tasks so the campaign still reads as one job."
+    },
+    {
+      "id": "long-running-tasks-29",
+      "type": "scenario",
+      "concept": "Workflow orchestrators for multi-step job dependencies instead of ad hoc chaining",
+      "question": "An ML platform's pipeline runs extract, transform, train, then report, implemented by each worker enqueueing the next step's message when it finishes. Failures mid-pipeline leave runs silently stuck, and nobody can tell how far a given run progressed. What should replace this design?",
+      "answer": "A workflow orchestrator such as Step Functions, Airflow, or Temporal that owns the multi-step state: it tracks each run's progress, retries individual steps, and handles branches and failure paths. Hand-rolled chain-enqueueing has no central state, so visibility and recovery simply do not exist."
+    },
+    {
+      "id": "long-running-tasks-30",
+      "type": "scenario",
+      "concept": "Delivering progress to clients: sane polling cadence vs push over WebSockets/SSE",
+      "question": "A browser-based video editor starts exports as background jobs and renders a progress bar by polling the status endpoint every 500ms from every open tab. The status service has become one of the platform's biggest sources of load. How should progress reach clients instead?",
+      "answer": "Poll at a modest interval — a few seconds is plenty for a progress bar — or push updates over WebSockets or SSE so clients receive progress without hammering the API. Sub-second polling at scale is self-inflicted load."
+    },
+    {
+      "id": "long-running-tasks-31",
+      "type": "true_false",
+      "concept": "The async pattern increases system complexity as its deliberate cost",
+      "question": "Moving long-running work behind a queue reduces overall system complexity, because the web tier becomes simpler.",
+      "answer": "False — it increases complexity: you add a queue, a worker fleet, status tracking, retry machinery, and monitoring, and you take on eventual consistency. That cost is paid deliberately in exchange for responsiveness, fault isolation, and independent scaling."
+    },
+    {
+      "id": "long-running-tasks-32",
+      "type": "scenario",
+      "concept": "Cheap validation belongs in the synchronous accept phase",
+      "question": "A CRM's bulk-import endpoint enqueues whatever CSV a user uploads and returns a job ID instantly. Malformed files then fail an hour later deep inside a worker, and users learn nothing at upload time. What should move, and to where?",
+      "answer": "Validation belongs in the synchronous accept phase: check format, size, and permissions — anything cheap — before enqueueing, so obviously bad requests fail immediately in front of the user. Only the genuinely long work should pay the async cost."
+    },
+    {
+      "id": "long-running-tasks-33",
+      "type": "scenario",
+      "concept": "Job results go to shared durable storage referenced by the job record, not worker-local disk",
+      "question": "A reporting service's workers generate PDFs, save them to the worker's local disk, and store the file path in the job record. Downloads fail whenever the request routes to a different machine, or after the worker that ran the job is recycled. What should change?",
+      "answer": "Workers must write results to shared durable storage — blob storage like S3 — and put that URL in the job record. Worker-local disk is ephemeral and invisible to the rest of the fleet, so results stored there are effectively lost."
+    },
+    {
+      "id": "long-running-tasks-34",
+      "type": "scenario",
+      "concept": "Pending jobs must live in a durable external queue, not in-process memory",
+      "question": "A Node.js side project keeps pending export jobs in an in-memory array inside the API process, with a background loop draining it. Every deploy or crash silently loses whatever jobs were waiting. What is the structural fix?",
+      "answer": "Pending jobs must live in a durable external queue — SQS, RabbitMQ, or persistent Redis — that survives process restarts. The queue is the system of record for accepted-but-unfinished work, so it cannot share the application process's lifetime."
+    }
+  ]
+}

@@ -1,0 +1,270 @@
+{
+  "section": "core-concepts",
+  "subsection": "Numbers to Know",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/numbers-to-know",
+  "concepts": [
+    "Outdated textbook hardware numbers cause systematic over-engineering",
+    "Modern single-server RAM reaches multiple terabytes (512 GiB standard, up to 24 TB)",
+    "Single-instance disk capacity (60 TB NVMe SSD / 336 TB HDD) means raw capacity rarely forces distribution",
+    "Object storage (S3) handles petabyte scale for blobs — don't build custom storage clusters",
+    "Intra-datacenter networking is 25+ Gbps with sub-1 ms latency and is rarely the bottleneck",
+    "Intra-datacenter bandwidth math: moving ~1 TB takes minutes, not hours",
+    "Cross-AZ latency (~1-2 ms) vs cross-region latency (~50-150 ms) gap",
+    "Speed-of-light latency floor (~80 ms NY-London) is fixed by geography, not code",
+    "Cache (Redis) single-operation latency is ~1 ms",
+    "Cache throughput: 100k+ operations/sec per node",
+    "Cache capacity: up to ~1 TB in memory on a single node",
+    "Cache scaling triggers: hit rate below 80%, latency above 1 ms, memory above 80%",
+    "Cache eviction churn signals an undersized cache even before hit rate and latency thresholds trip",
+    "Single Postgres throughput: tens of thousands of QPS (~50k)",
+    "Single-node relational storage: single-digit TB comfortable, tens of TB possible",
+    "Indexed/warm database read latency is single-digit milliseconds",
+    "Real sharding triggers: tens of TB of data or sustained writes above ~10k/sec",
+    "Geographic data distribution needs force partitioning even at modest size and write rates",
+    "Read-heavy load scales with replicas and caching before sharding",
+    "Application servers hold 100k+ concurrent connections per instance",
+    "Application servers are CPU-bound first: scale on >70-80% CPU or SLA-breaking latency",
+    "Stateless tier sizing arithmetic: total RPS divided by per-server RPS plus headroom",
+    "Message queue throughput: on the order of 1M messages/sec per broker",
+    "Queue end-to-end latency under ~5 ms makes queues viable in the synchronous hot path",
+    "Queue retention of tens of TB enables replay and backfill directly from the log",
+    "Queue scaling triggers: throughput near ~800k msgs/sec per broker and consumer lag that grows without draining",
+    "Estimate at decision points in the interview, not as an upfront ritual",
+    "Interview mistake: premature sharding at hundreds of GB signals outdated calibration",
+    "Interview mistake: overestimating latency inflates budgets and spawns unnecessary layers",
+    "Interview mistake: over-engineering the write path with NoSQL/buffers at modest write rates",
+    "Cost reality: one big machine plus simplicity beats distributed complexity; engineer time dominates hardware cost",
+    "Latency hierarchy spans roughly 1,000x per tier: RAM nanoseconds, SSD microseconds, network milliseconds"
+  ],
+  "question_count": 32,
+  "questions": [
+    {
+      "id": "numbers-to-know-01",
+      "type": "scenario",
+      "concept": "Outdated textbook hardware numbers cause systematic over-engineering",
+      "question": "A junior engineer at a concert-ticketing startup designs the seat-inventory service straight out of a 2013 distributed-systems textbook: a 12-node cluster for 200 GB of data serving 2,000 queries per second. A senior reviewer rejects the design as wildly oversized. Why is the textbook steering the engineer wrong?",
+      "answer": "The book's numbers describe hardware a decade out of date. A modern single server offers hundreds of gigabytes of RAM and tens of thousands of queries per second, so 200 GB at 2k QPS is a one-box problem — capacity grew roughly an order of magnitude while the textbook stayed frozen."
+    },
+    {
+      "id": "numbers-to-know-02",
+      "type": "scenario",
+      "concept": "Modern single-server RAM reaches multiple terabytes (512 GiB standard, up to 24 TB)",
+      "question": "An ad-tech firm serves lookups against a 2 TB user-profile table. The architect assumes no single machine can hold 2 TB in RAM, so she designs a 16-node partitioned in-memory fleet with a custom routing layer. What is she getting wrong?",
+      "answer": "Memory-optimized cloud instances go to 4 TB and even 24 TB of RAM, so the entire table fits in memory on one machine. The partitioned fleet and router add failure modes to solve a problem that no longer exists."
+    },
+    {
+      "id": "numbers-to-know-03",
+      "type": "scenario",
+      "concept": "Single-instance disk capacity (60 TB NVMe SSD / 336 TB HDD) means raw capacity rarely forces distribution",
+      "question": "A smart-agriculture IoT platform accumulates about 30 TB of sensor readings per year. On day one the team proposes a horizontally sharded storage cluster because '30 TB will never fit on one node.' Is the premise sound?",
+      "answer": "No — single instances offer roughly 60 TB of local NVMe SSD or 336 TB of HDD, so a year or two of data fits on one box. Raw storage capacity alone almost never forces a distributed design anymore."
+    },
+    {
+      "id": "numbers-to-know-04",
+      "type": "scenario",
+      "concept": "Object storage (S3) handles petabyte scale for blobs — don't build custom storage clusters",
+      "question": "A video-sharing app projects 2 PB of uploaded footage within three years. An infrastructure engineer starts speccing a self-managed distributed file cluster to hold it all. What should the team do instead, and why?",
+      "answer": "Put the blobs in object storage like S3, which serves petabytes routinely with high durability. Building and operating a custom storage cluster is enormous effort spent on an already-solved problem."
+    },
+    {
+      "id": "numbers-to-know-05",
+      "type": "scenario",
+      "concept": "Intra-datacenter networking is 25+ Gbps with sub-1 ms latency and is rarely the bottleneck",
+      "question": "A food-delivery backend is split into six microservices in the same availability zone, and placing an order crosses four internal service hops. A reviewer objects that each hop 'adds tens of milliseconds.' What do those hops actually cost on modern infrastructure?",
+      "answer": "Intra-AZ round trips run under a millisecond on 25 Gbps-class links, so four hops add a few milliseconds total. Hop count inside one AZ is rarely where latency problems live."
+    },
+    {
+      "id": "numbers-to-know-06",
+      "type": "scenario",
+      "concept": "Intra-datacenter bandwidth math: moving ~1 TB takes minutes, not hours",
+      "question": "An ML team copies a 1 TB feature snapshot each night between two services in the same datacenter and books a 6-hour maintenance window for it, fearing the transfer will crawl. Roughly how long does the copy really take, and what does that imply?",
+      "answer": "At ~25 Gbps, 1 TB (8 terabits) moves in about five to six minutes. Intra-datacenter bandwidth is rarely the constraint, so the multi-hour window is pure superstition."
+    },
+    {
+      "id": "numbers-to-know-07",
+      "type": "scenario",
+      "concept": "Cross-AZ latency (~1-2 ms) vs cross-region latency (~50-150 ms) gap",
+      "question": "A digital bank runs its primary database in one availability zone and its app servers in another, paying a barely noticeable 1-2 ms per query. For data-residency reasons the team now plans to move the database to another continent while leaving the app servers put, expecting a similar penalty. What are they missing?",
+      "answer": "Cross-region round trips cost 50-150 ms, not 1-2 ms, and a request issuing several sequential queries would stack up hundreds of milliseconds. Compute has to move with the data, or the new region needs its own replica."
+    },
+    {
+      "id": "numbers-to-know-08",
+      "type": "scenario",
+      "concept": "Speed-of-light latency floor (~80 ms NY-London) is fixed by geography, not code",
+      "question": "A trading-analytics dashboard hosted in a Virginia region serves users in London, whose requests never complete in under about 80 ms no matter how aggressively the team profiles and optimizes the backend. What is going wrong?",
+      "answer": "Nothing in the code — roughly 80 ms is the physical floor for a transatlantic round trip through fiber. The only fix is geographic: serve those users from a European region or edge location."
+    },
+    {
+      "id": "numbers-to-know-09",
+      "type": "scenario",
+      "concept": "Cache (Redis) single-operation latency is ~1 ms",
+      "question": "A mobile-gaming team budgets 20 ms for every Redis leaderboard read, and that assumption pushes them to build an elaborate request-coalescing layer to 'amortize the cache cost.' What is wrong with the budget?",
+      "answer": "A cache hit costs about 1 ms, so the estimate is off by 20x. The coalescing machinery is solving a latency problem that does not exist."
+    },
+    {
+      "id": "numbers-to-know-10",
+      "type": "scenario",
+      "concept": "Cache throughput: 100k+ operations/sec per node",
+      "question": "A social app projects 40,000 cache reads per second at peak. The infra team plans an 8-shard Redis cluster because 'no single instance can take that traffic.' Evaluate the plan.",
+      "answer": "One Redis node sustains well over 100k operations per second, so 40k fits on a single instance with headroom. Add a replica for availability if needed — sharding for throughput here is unjustified."
+    },
+    {
+      "id": "numbers-to-know-11",
+      "type": "scenario",
+      "concept": "Cache capacity: up to ~1 TB in memory on a single node",
+      "question": "An e-commerce site measures its hot product-catalog working set at about 300 GB and concludes it is 'far too big to cache,' sending every read to the database. What option are they overlooking?",
+      "answer": "Modern cache nodes hold up to about a terabyte in memory, so the entire 300 GB hot set fits in a single instance. 'Too big to cache' now means approaching a terabyte, not hundreds of gigabytes."
+    },
+    {
+      "id": "numbers-to-know-12",
+      "type": "scenario",
+      "concept": "Cache scaling triggers: hit rate below 80%, latency above 1 ms, memory above 80%",
+      "question": "A B2B analytics dashboard's Redis tier reports a 65% hit rate, 3 ms median read latency, and 85% memory utilization. The on-call engineer declares the cache healthy. What do these numbers actually indicate?",
+      "answer": "All three warning thresholds are breached: hit rate under ~80%, latency over ~1 ms, and memory over ~80%. The cache needs more capacity or a rethink of keys, TTLs, and eviction — it is not healthy."
+    },
+    {
+      "id": "numbers-to-know-13",
+      "type": "scenario",
+      "concept": "Cache eviction churn signals an undersized cache even before hit rate and latency thresholds trip",
+      "question": "During a week-long promotion, a flash-sale site's Redis shows an 82% hit rate and ~1 ms reads — both nominally fine — yet its eviction counter is climbing fast, and traces show the same product keys being evicted and re-loaded from the database every few seconds. Should the on-call engineer relax?",
+      "answer": "No — rapid eviction churn means the working set no longer fits in memory and the cache is thrashing, hammering the database with repeated refills. Churn is a scaling trigger in its own right; grow the cache (or fix keys and TTLs) before the headline hit-rate and latency numbers collapse too."
+    },
+    {
+      "id": "numbers-to-know-14",
+      "type": "scenario",
+      "concept": "Single Postgres throughput: tens of thousands of QPS (~50k)",
+      "question": "A ride-hailing startup forecasts 8,000 database queries per second at launch, and the CTO mandates a sharded multi-primary setup because 'a relational database can't survive that.' Which belief here is outdated?",
+      "answer": "A single modern Postgres instance handles tens of thousands of queries per second, so 8k QPS is comfortable single-node territory. Launch with one primary plus replicas and revisit only if traffic grows an order of magnitude."
+    },
+    {
+      "id": "numbers-to-know-15",
+      "type": "scenario",
+      "concept": "Single-node relational storage: single-digit TB comfortable, tens of TB possible",
+      "question": "A subscription-billing platform's relational database has grown to 1.5 TB, and leadership pushes a migration to a distributed NoSQL store purely because of the size. Is size a valid reason here?",
+      "answer": "No — single-node relational databases comfortably serve single-digit terabytes and can stretch to tens. 1.5 TB is not a storage problem, so the migration would trade a non-issue for a costly rewrite."
+    },
+    {
+      "id": "numbers-to-know-16",
+      "type": "scenario",
+      "concept": "Indexed/warm database read latency is single-digit milliseconds",
+      "question": "A chat product's team assumes every database query costs around 200 ms, so they put a cache in front of every table — including rarely touched user preferences. What flawed premise drives this design?",
+      "answer": "A well-indexed query against warm data returns in single-digit milliseconds, not 200. Blanket caching adds invalidation complexity to fix latency that was never there; cache only genuinely hot or expensive reads."
+    },
+    {
+      "id": "numbers-to-know-17",
+      "type": "scenario",
+      "concept": "Real sharding triggers: tens of TB of data or sustained writes above ~10k/sec",
+      "question": "A logistics company's Postgres holds 5 TB and absorbs 3,000 writes per second, growing about 40% a year. The board asks engineering to name the point at which sharding becomes genuinely necessary. What is the right answer?",
+      "answer": "Shard when data approaches tens of terabytes or sustained writes exceed roughly 10,000 per second. On this trajectory that is years away — keep the schema shardable, but do not build it yet."
+    },
+    {
+      "id": "numbers-to-know-18",
+      "type": "scenario",
+      "concept": "Geographic data distribution needs force partitioning even at modest size and write rates",
+      "question": "A B2B SaaS database holds just 800 GB and takes 2,000 writes per second — far below any capacity or throughput threshold — but a new contract requires EU customers' records to be stored and served in Europe while US customers stay in a US region. The lead engineer argues 'we don't qualify for sharding yet.' What is he missing?",
+      "answer": "Geographic distribution is its own scaling trigger, independent of size and write rate. Residency rules and cross-region latency for local users force partitioning the data by region even though a single node could trivially carry the load."
+    },
+    {
+      "id": "numbers-to-know-19",
+      "type": "scenario",
+      "concept": "Read-heavy load scales with replicas and caching before sharding",
+      "question": "A news-feed service is 95% reads, and its single database is CPU-saturated from read traffic alone. An engineer proposes sharding as the fix. What should the team try first, and why?",
+      "answer": "Add read replicas and a cache — read-heavy load scales fine without splitting the data. Sharding exists for write-throughput and storage limits, and it drags in cross-shard queries and rebalancing this problem does not need."
+    },
+    {
+      "id": "numbers-to-know-20",
+      "type": "scenario",
+      "concept": "Application servers hold 100k+ concurrent connections per instance",
+      "question": "A smart-home platform must hold 1 million always-on WebSocket connections from devices. Working from an old 'about 5k connections per box' instinct, the team budgets 200 connection servers. What does modern hardware actually support?",
+      "answer": "A tuned modern server holds 100k+ concurrent connections, so on the order of 10-15 servers plus headroom suffices. The 5k figure is a relic of the C10K era."
+    },
+    {
+      "id": "numbers-to-know-21",
+      "type": "scenario",
+      "concept": "Application servers are CPU-bound first: scale on >70-80% CPU or SLA-breaking latency",
+      "question": "A photo-sharing API tier runs at 85% CPU during peak with response times drifting past the SLA, but each instance carries only 20,000 of its 100k-connection capacity. An engineer argues no scaling is needed since 'connections are fine.' What is the correct read?",
+      "answer": "CPU beyond ~70-80% and SLA-violating latency are the real scaling signals; app servers are almost always CPU-bound long before connection limits matter. Add instances now."
+    },
+    {
+      "id": "numbers-to-know-22",
+      "type": "scenario",
+      "concept": "Stateless tier sizing arithmetic: total RPS divided by per-server RPS plus headroom",
+      "question": "An online exam platform expects a 30,000-requests-per-second spike when results are published. A load test shows one app server sustains about 4,000 RPS. How should the team size the fleet, and why is this easy?",
+      "answer": "Divide: 30k / 4k is roughly 8 servers, so provision about 10 for headroom. Because the tier is stateless, capacity is just instances behind a load balancer — this one-line arithmetic is exactly the kind of estimation that should drive the decision."
+    },
+    {
+      "id": "numbers-to-know-23",
+      "type": "scenario",
+      "concept": "Message queue throughput: on the order of 1M messages/sec per broker",
+      "question": "A clickstream pipeline ingests 150,000 events per second, and the architect sizes a 20-broker Kafka cluster 'to handle the throughput.' What is mis-sized here?",
+      "answer": "A single modern broker pushes on the order of a million messages per second, so 150k is nowhere near a throughput problem. Broker count should be driven by replication, durability, and partitioning needs — a handful of brokers is plenty."
+    },
+    {
+      "id": "numbers-to-know-24",
+      "type": "scenario",
+      "concept": "Queue end-to-end latency under ~5 ms makes queues viable in the synchronous hot path",
+      "question": "A payment processor must record an audit event for every transaction. Believing message queues add hundreds of milliseconds, the team builds a custom in-process buffer with homegrown retry logic rather than publishing to Kafka inside the request. What does the premise get wrong?",
+      "answer": "Modern queues deliver end-to-end in under ~5 ms, so publishing in the synchronous path adds a few milliseconds at most. The bespoke buffer re-implements, worse, what the queue already provides."
+    },
+    {
+      "id": "numbers-to-know-25",
+      "type": "scenario",
+      "concept": "Queue retention of tens of TB enables replay and backfill directly from the log",
+      "question": "An analytics team wants the last 30 days of raw events replayable for backfills. Assuming 'queues can't hold data,' they build an immediate ETL hop from Kafka to S3 and replay from S3 with custom tooling. What simpler design do modern brokers enable?",
+      "answer": "Kafka brokers store tens of terabytes, so just retain 30 days in the topic and replay by rewinding consumer offsets. The log itself is the replay buffer — no side pipeline required."
+    },
+    {
+      "id": "numbers-to-know-26",
+      "type": "scenario",
+      "concept": "Queue scaling triggers: throughput near ~800k msgs/sec per broker and consumer lag that grows without draining",
+      "question": "An event-streaming platform's hottest Kafka broker is sustaining about 850,000 messages per second, and the consumer-lag graph has climbed all day without ever draining back to zero. The on-call engineer sees no errors and declares the cluster fine. Which scaling signals is she ignoring?",
+      "answer": "Both classic queue triggers are firing: sustained throughput near ~800k msgs/sec is brushing a broker's ~1M ceiling, and lag that grows without recovering means consumers permanently cannot keep up. Add brokers and partitions and scale out consumers now — 'no errors yet' is not headroom."
+    },
+    {
+      "id": "numbers-to-know-27",
+      "type": "scenario",
+      "concept": "Estimate at decision points in the interview, not as an upfront ritual",
+      "question": "In a mock system-design interview, a candidate opens with ten minutes of arithmetic — daily active users, storage growth, bandwidth — then designs the entire system without referencing a single computed number. The feedback is negative even though the math was correct. Why?",
+      "answer": "Estimation earns credit only when it drives a decision — whether to shard, whether the cache fits in memory, how many servers to run. Upfront ritual math that never touches the design demonstrates memorization, not judgment."
+    },
+    {
+      "id": "numbers-to-know-28",
+      "type": "true_false",
+      "concept": "Interview mistake: premature sharding at hundreds of GB signals outdated calibration",
+      "question": "True or false: proposing to shard a 500 GB relational database in a system design interview signals strong scalability instincts.",
+      "answer": "False — it signals calibration to decade-old hardware. Single nodes comfortably serve terabytes, so sharding at 500 GB buys cross-shard complexity and rebalancing pain for zero benefit."
+    },
+    {
+      "id": "numbers-to-know-29",
+      "type": "scenario",
+      "concept": "Interview mistake: overestimating latency inflates budgets and spawns unnecessary layers",
+      "question": "A travel-booking team sets a 1-second SLA for its search page, reasoning that the path — load balancer, app server, cache check, one indexed database query — 'probably costs 500 ms.' What is a realistic modern budget for that path, and why does the inflated estimate matter?",
+      "answer": "Sub-millisecond internal hops, a ~1 ms cache check, and a single-digit-millisecond indexed query put the whole path in the tens of milliseconds. Overestimating by 10x produces bloated SLAs and mitigation layers built for slowness that is imaginary."
+    },
+    {
+      "id": "numbers-to-know-30",
+      "type": "scenario",
+      "concept": "Interview mistake: over-engineering the write path with NoSQL/buffers at modest write rates",
+      "question": "A fitness app ingests 4,000 workout-record writes per second. A proposal introduces Cassandra for storage with Kafka buffering in front, because 'relational databases can't absorb this write load.' Diagnose the proposal.",
+      "answer": "4k writes per second is less than half the ~10k writes/sec threshold where sharding even enters the conversation, and far below the ~50k transactions per second a single Postgres node sustains. The NoSQL-plus-buffer stack is over-engineering for a write volume that is not high, paid for in daily operational complexity."
+    },
+    {
+      "id": "numbers-to-know-31",
+      "type": "scenario",
+      "concept": "Cost reality: one big machine plus simplicity beats distributed complexity; engineer time dominates hardware cost",
+      "question": "A seed-stage startup CTO, aiming to save money, plans a self-managed cluster of eight small instances with sharding middleware instead of one large memory-optimized machine that costs slightly more per month. What is the flaw in the cost analysis?",
+      "answer": "The dominant cost is engineering time spent building and operating distributed complexity, not the hardware delta. One big simple box is almost always cheaper in total until you genuinely exceed what a single machine can do."
+    },
+    {
+      "id": "numbers-to-know-32",
+      "type": "mcq2",
+      "concept": "Latency hierarchy spans roughly 1,000x per tier: RAM nanoseconds, SSD microseconds, network milliseconds",
+      "question": "For a single data read, which statement better describes modern storage-tier latencies?",
+      "options": [
+        "RAM, SSD, and cross-region network reads each step up roughly 1,000x in latency (nanoseconds, then microseconds, then ~100 milliseconds)",
+        "RAM, SSD, and cross-region network reads each step up roughly 10x in latency, so tier choice barely matters at scale"
+      ],
+      "answer": "RAM, SSD, and cross-region network reads each step up roughly 1,000x in latency (nanoseconds, then microseconds, then ~100 milliseconds) — the gaps are orders of magnitude, which is why keeping hot data in memory dominates performance design."
+    }
+  ]
+}

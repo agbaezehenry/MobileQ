@@ -1,0 +1,234 @@
+{
+  "section": "patterns",
+  "subsection": "Multi-step Processes",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/multi-step-processes",
+  "concepts": [
+    "Naive in-request sequential service calls lose all progress on a crash, leaving inconsistent state",
+    "Interweaving system-level concerns (crashes, retries) with business logic makes workflows brittle",
+    "Single-server primitive: database status-column state machine plus polling worker, and how it sprawls",
+    "Queue-based step handoff: durable delivery and scalable workers, but end-to-end workflow state stays implicit",
+    "Saga pattern: chain of local transactions each paired with a compensating transaction",
+    "Sagas lack isolation: intermediate committed states are visible and compensation is not a true rollback",
+    "Event-driven choreography: services react to broker events with no central coordinator (loose coupling)",
+    "Choreography pitfall: workflow definition and state are implicit and scattered, so tracing and changing the flow is hard",
+    "Orchestration benefit: a central coordinator holds explicit workflow state, giving observability and auditability",
+    "Orchestrator crash recovery requires persisting every state transition so another worker can resume",
+    "Durable execution replay: completed activity results are read from event history, not re-executed",
+    "Workflow code must be deterministic; side effects and nondeterministic calls belong in activities",
+    "Activities execute at-least-once, so they must be idempotent (idempotency keys on external calls)",
+    "Workflow engines provide declarative per-step retry policies with exponential backoff and timeouts",
+    "Durable timers survive restarts and let workflows sleep for days or months without holding resources",
+    "Temporal-style code-first durable execution vs AWS Step Functions declarative managed state machines",
+    "Airflow targets scheduled batch data DAGs, not high-volume event-triggered transactional workflows",
+    "Recognizing workflow-shaped interview problems: multi-channel fallbacks, payments, fulfillment, human steps",
+    "AI agent pipelines are workflow-shaped: long-running, stateful, failure-prone model and tool steps suit durable execution",
+    "When NOT to use: a single-database atomic operation should be an ACID transaction, not a workflow",
+    "When NOT to use: latency-critical synchronous request paths cannot afford durable-execution overhead",
+    "Workflow versioning: deploying changed code breaks replay of in-flight histories; version the definitions",
+    "Retiring old workflow code: drain in-flight instances or explicitly migrate their state first",
+    "Keep workflow state small by passing blob-storage references instead of large payloads",
+    "Unbounded looping workflows need continue-as-new style history truncation",
+    "External events and human-in-the-loop: durable waits on signals with timeout timers",
+    "Exactly-once external side effects are impossible; at-least-once plus receiver-side dedup gives effectively-once",
+    "Interview signal: proactively articulate failure modes and recovery, since these workflows dominate production oncall"
+  ],
+  "question_count": 28,
+  "questions": [
+    {
+      "id": "multi-step-processes-01",
+      "type": "scenario",
+      "concept": "Naive in-request sequential service calls lose all progress on a crash, leaving inconsistent state",
+      "question": "A concert-ticketing site handles checkout in one HTTP request handler: charge the card, then reserve the seat, then email the ticket, one call after another. During a peak on-sale, a routine deploy restarts the servers, and support is flooded with customers who were charged but hold no seat. What is the fundamental design flaw?",
+      "answer": "The process's only record of progress lived in the in-flight request, so a crash between steps silently abandoned the workflow mid-way with no way to resume or undo. Multi-step processes need their state persisted outside the request handler so a crash can be detected and recovered."
+    },
+    {
+      "id": "multi-step-processes-02",
+      "type": "scenario",
+      "concept": "Interweaving system-level concerns (crashes, retries) with business logic makes workflows brittle",
+      "question": "A food-delivery startup's order service has grown into nested try/catch blocks, retry counters, and status flags tangled together with business rules like 'if the restaurant rejects, offer a substitute.' New engineers cannot tell recovery code from product logic, and every business change breaks some retry path. What does the multi-step process pattern identify as the root problem?",
+      "answer": "System-level concerns (crashes, retries, timeouts) are interwoven with business-level logic, which is exactly what makes these systems brittle. The fix is to push reliability into a workflow layer or durable execution engine so the business code reads as a clean sequence of steps."
+    },
+    {
+      "id": "multi-step-processes-03",
+      "type": "scenario",
+      "concept": "Single-server primitive: database status-column state machine plus polling worker, and how it sprawls",
+      "question": "An HR SaaS runs employee onboarding as rows in an 'onboarding' table with a status column; a cron worker scans for stalled rows every minute and fires the next step. It worked at 4 steps, but at 12 steps the transitions are scattered across a dozen handlers and rows keep getting stuck in states nobody wrote code for. What approach is this, and why is it hitting a wall?",
+      "answer": "This is the single-server primitive: a database-as-state-machine with a polling recovery worker. It is fine for simple flows, but the checkpointing, transitions, and retry logic are all hand-rolled and scattered, so every added step multiplies edge cases — the point where a workflow engine that centralizes state and recovery pays off."
+    },
+    {
+      "id": "multi-step-processes-04",
+      "type": "scenario",
+      "concept": "Queue-based step handoff: durable delivery and scalable workers, but end-to-end workflow state stays implicit",
+      "question": "A print-on-demand shop outgrows its cron-scanned status table: each completed step now enqueues a message for the next stage (render, then print, then ship), and stateless workers consume from the queues. Throughput is much better, but when a customer asks 'where is my order?', engineers have to inspect three queues and three per-stage tables to answer. What did the queues buy them, and what gap remains?",
+      "answer": "Queues added durable handoff and horizontally scalable workers — an unacknowledged message survives a worker crash and is redelivered — but no single component holds the end-to-end workflow state, so per-order progress, cross-step timeouts, and compensation logic stay scattered. That missing explicit central state is exactly what an orchestrator or workflow engine adds on top."
+    },
+    {
+      "id": "multi-step-processes-05",
+      "type": "scenario",
+      "concept": "Saga pattern: chain of local transactions each paired with a compensating transaction",
+      "question": "A travel site books a trip across three separate services: flight, hotel, then rental car. The hotel service goes down after the flight is already booked, stranding customers with half a trip. Distributed transactions across the three vendors are impossible. What pattern addresses this, and how does it work?",
+      "answer": "The saga pattern: model the booking as a chain of local transactions, each with a compensating action (cancel the flight, release the hotel) that runs in reverse order when a later step fails. Instead of atomicity, you get guaranteed forward completion or guaranteed semantic undo."
+    },
+    {
+      "id": "multi-step-processes-06",
+      "type": "scenario",
+      "concept": "Sagas lack isolation: intermediate committed states are visible and compensation is not a true rollback",
+      "question": "A fintech wallet uses a saga: step one credits the recipient's balance, a later step fails, and the compensation debits it back. But in the gap between credit and compensation, some recipients saw the money and spent it. Which property of sagas does this incident expose?",
+      "answer": "Sagas have no isolation — each local transaction commits immediately, so intermediate states are visible to concurrent readers, and compensation is a new transaction rather than a rollback. Money-like resources need pending/hold states so nothing acts on funds until the saga completes."
+    },
+    {
+      "id": "multi-step-processes-07",
+      "type": "scenario",
+      "concept": "Event-driven choreography: services react to broker events with no central coordinator (loose coupling)",
+      "question": "When a match ends on a gaming platform, three things must happen: update player ratings, grant loot, and post to the activity feed. The team has the match service publish a single MatchCompleted event to a broker, and each of the three services subscribes and reacts on its own. What coordination style is this, and what is its main advantage?",
+      "answer": "Event-driven choreography: there is no coordinator, each service independently reacts to events. Its advantage is loose coupling — a fourth consumer can be added later without touching the match service or any existing subscriber."
+    },
+    {
+      "id": "multi-step-processes-08",
+      "type": "scenario",
+      "concept": "Choreography pitfall: workflow definition and state are implicit and scattered, so tracing and changing the flow is hard",
+      "question": "A social network runs content publishing as a chain of events across nine choreographed services. When on-call is asked 'where is post X stuck?', the only way to answer is grepping nine services' logs, and the true end-to-end flow exists only in senior engineers' heads. What is the core weakness being exposed?",
+      "answer": "In choreography the workflow is implicit — no single component owns the definition or the current state, so answering 'where is this instance?' and reasoning about the flow requires reconstructing it from scattered services. An orchestrator (or workflow engine) gives one authoritative place that knows the flow and each instance's position in it."
+    },
+    {
+      "id": "multi-step-processes-09",
+      "type": "scenario",
+      "concept": "Orchestration benefit: a central coordinator holds explicit workflow state, giving observability and auditability",
+      "question": "An IoT company rolls firmware updates through canary, health-check, staged, and full-fleet phases. One camp wants services reacting to each other's events; the other wants a coordinator service that drives each phase and records where every rollout stands. Compliance requires an instant, auditable answer to 'what stage is rollout Y in, and who advanced it?' Which approach fits better, and why?",
+      "answer": "Orchestration. A central coordinator makes the flow explicit and keeps authoritative per-instance state, so observability and audit trails come for free — exactly what choreography makes painful."
+    },
+    {
+      "id": "multi-step-processes-10",
+      "type": "scenario",
+      "concept": "Orchestrator crash recovery requires persisting every state transition so another worker can resume",
+      "question": "A ride-hailing service built an orchestrator that walks each trip through matching, driver notification, and pickup confirmation, keeping each trip's progress in the orchestrator's memory. The orchestrator host dies mid-afternoon and hundreds of in-flight trips freeze permanently. What must change for the design to survive this?",
+      "answer": "Every state transition must be persisted to durable storage before moving on, so any other worker can read the last recorded step and resume the workflow. This is precisely the guarantee durable execution engines provide by journaling each step to an event history."
+    },
+    {
+      "id": "multi-step-processes-11",
+      "type": "scenario",
+      "concept": "Durable execution replay: completed activity results are read from event history, not re-executed",
+      "question": "An engineer adopting a durable execution engine for an e-commerce checkout objects: 'After a crash it re-runs my workflow function from the top — won't the customer get charged a second time?' Is the concern valid, and why or why not?",
+      "answer": "No. On replay the engine re-executes the workflow function but intercepts each completed activity and returns its recorded result from the event history instead of calling it again, so the charge activity runs once and its stored result is reused. Only steps that never completed actually execute."
+    },
+    {
+      "id": "multi-step-processes-12",
+      "type": "scenario",
+      "concept": "Workflow code must be deterministic; side effects and nondeterministic calls belong in activities",
+      "question": "A subscription-billing workflow function reads the current wall-clock time and makes a direct HTTP call to a tax-rate API inline in the workflow body. After a worker restart, resumed workflows start failing with non-determinism errors. Why, and what is the rule being violated?",
+      "answer": "Replay requires the workflow function to make identical decisions every run, but wall-clock reads and direct network calls return different values on replay than they did originally. All side effects and nondeterministic operations must be moved into activities, whose results get recorded in the history and replayed verbatim."
+    },
+    {
+      "id": "multi-step-processes-13",
+      "type": "scenario",
+      "concept": "Activities execute at-least-once, so they must be idempotent (idempotency keys on external calls)",
+      "question": "An insurance platform's payout activity calls the bank's transfer API. Occasionally the call times out after the bank has actually processed it, the workflow engine retries the activity, and the claimant is paid twice. What should the team change?",
+      "answer": "Activities run at-least-once under retries, so they must be idempotent: send a stable idempotency key (e.g., the claim ID) with the transfer so the bank deduplicates repeat attempts. The retry then becomes harmless instead of a double payout."
+    },
+    {
+      "id": "multi-step-processes-14",
+      "type": "scenario",
+      "concept": "Workflow engines provide declarative per-step retry policies with exponential backoff and timeouts",
+      "question": "A B2B analytics dashboard's report pipeline has five steps, each wrapping its own hand-written retry loop with hardcoded sleeps; policies are inconsistent, and one flaky downstream API triggers synchronized retry storms. The team is moving to a workflow engine — what specifically does the engine replace here?",
+      "answer": "The engine replaces all the hand-rolled loops with declarative per-activity retry policies — max attempts, exponential backoff, and timeouts configured rather than coded. Retry behavior becomes uniform, tunable, and out of the business logic."
+    },
+    {
+      "id": "multi-step-processes-15",
+      "type": "scenario",
+      "concept": "Durable timers survive restarts and let workflows sleep for days or months without holding resources",
+      "question": "An edtech product must wait 30 days after signup to end a trial, send a reminder, wait 3 more days, then downgrade the account. An engineer proposes a service that holds each user's flow on a thread sleeping for 30 days. What is wrong with this, and what does the pattern use instead?",
+      "answer": "In-memory sleeps die with the process and pin resources for weeks. Durable timers persist the wake-up time in the engine's store, so the workflow consumes nothing while waiting and fires correctly even across crashes and deploys — this is how workflows span days or months."
+    },
+    {
+      "id": "multi-step-processes-16",
+      "type": "scenario",
+      "concept": "Temporal-style code-first durable execution vs AWS Step Functions declarative managed state machines",
+      "question": "An AWS-hosted startup is choosing a workflow system for order processing. Their flow has deep branching and loops they want to express and unit-test in their own programming language, and they already operate a Kubernetes cluster; the alternative on the table is a fully managed service where the flow is defined as a declarative JSON state machine. Which of the two approaches fits better here, and why?",
+      "answer": "A code-first durable execution engine like Temporal: complex branching and loop-heavy logic is far more natural and testable as real code than as a JSON state machine, and they can run the cluster themselves. Step Functions wins when the flow is simple and the team wants zero infrastructure, trading expressiveness for a managed service."
+    },
+    {
+      "id": "multi-step-processes-17",
+      "type": "scenario",
+      "concept": "Airflow targets scheduled batch data DAGs, not high-volume event-triggered transactional workflows",
+      "question": "A video platform picked Apache Airflow to run its per-upload pipeline — transcode, thumbnail, then notify — triggered thousands of times a day by individual user uploads. Runs queue behind the scheduler and per-video latency is terrible. Why is this tool a misfit?",
+      "answer": "Airflow is built for scheduled, batch-oriented data DAGs, not for high-volume workflows triggered per user event, so its scheduler becomes the bottleneck. Event-triggered transactional flows belong on a durable execution engine designed for many concurrent low-latency workflow instances."
+    },
+    {
+      "id": "multi-step-processes-18",
+      "type": "scenario",
+      "concept": "Recognizing workflow-shaped interview problems: multi-channel fallbacks, payments, fulfillment, human steps",
+      "question": "In an interview you are designing a notification system: try a push notification first, wait five minutes for a read receipt, fall back to SMS, and finally to email. A candidate proposes chaining three queues with cron jobs sweeping for un-acked messages. What is the sharper way to frame this requirement?",
+      "answer": "This try-wait-fallback sequence is a multi-step process in disguise: model each notification as a durable workflow with steps, durable timers for the wait windows, and per-channel retries. That framing replaces the fragile queue-plus-cron scaffolding with one auditable state machine per notification."
+    },
+    {
+      "id": "multi-step-processes-19",
+      "type": "scenario",
+      "concept": "AI agent pipelines are workflow-shaped: long-running, stateful, failure-prone model and tool steps suit durable execution",
+      "question": "A startup ships an AI coding agent: each run has an LLM plan the work, then execute a chain of tool calls — clone the repo, edit files, run tests, open a pull request — often taking 20 minutes with retries on flaky model calls. The whole loop lives in one HTTP request handler, and users lose entire runs whenever a pod recycles. Framed as a system design problem, what shape does this have and what should back it?",
+      "answer": "An agent run is a multi-step process: a long-lived, stateful sequence of failure-prone steps, so it belongs on a durable workflow — each model call and tool invocation as a retryable activity with progress checkpointed between steps — not in a request handler. This is why AI agent pipelines have become a prime spot where interviewers expect the workflow pattern."
+    },
+    {
+      "id": "multi-step-processes-20",
+      "type": "scenario",
+      "concept": "When NOT to use: a single-database atomic operation should be an ACID transaction, not a workflow",
+      "question": "An e-commerce team wants to introduce a workflow engine to handle converting a gift card into store credit — debiting one row and crediting another, both in the same Postgres database. Is the workflow engine justified here?",
+      "answer": "No — this is a single atomic operation in one database, so a plain ACID transaction gives all-or-nothing semantics with none of the machinery. Workflow patterns earn their complexity only when steps span services or systems that cannot share a transaction."
+    },
+    {
+      "id": "multi-step-processes-21",
+      "type": "scenario",
+      "concept": "When NOT to use: latency-critical synchronous request paths cannot afford durable-execution overhead",
+      "question": "An ad-tech engineer, excited after adopting a workflow engine for billing, proposes routing every real-time bid request — which must return in under 100 milliseconds — through the same engine as a three-step workflow. Why is this a bad idea?",
+      "answer": "Durable execution persists state and schedules tasks at every step, adding storage round-trips and queueing overhead that a sub-100ms synchronous path cannot absorb. Reserve workflow engines for long-running or background processes and keep hot request paths as direct calls."
+    },
+    {
+      "id": "multi-step-processes-22",
+      "type": "scenario",
+      "concept": "Workflow versioning: deploying changed code breaks replay of in-flight histories; version the definitions",
+      "question": "A logistics company adds a customs-declaration step to its delivery workflow and deploys. Deliveries started before the deploy — some mid-flight for days — immediately begin failing with replay errors on the workflow engine. What happened, and what is the standard remedy?",
+      "answer": "Replaying old event histories against the changed code diverges from what was recorded, tripping non-determinism detection. The remedy is workflow versioning: gate the new step behind a version check (or register the change as a new workflow version) so old instances replay the original logic while new instances take the new path."
+    },
+    {
+      "id": "multi-step-processes-23",
+      "type": "scenario",
+      "concept": "Retiring old workflow code: drain in-flight instances or explicitly migrate their state first",
+      "question": "Months after versioning its refund workflow, a marketplace team wants to delete the crufty v1 code path entirely, but some v1 refund workflows are still in flight and could replay at any time. What are their options for retiring it safely?",
+      "answer": "Either drain: keep v1 code until every v1 instance has completed, then delete; or explicitly migrate the in-flight instances' state into the v2 definition. Deleting code that live histories still need to replay will break those workflows."
+    },
+    {
+      "id": "multi-step-processes-24",
+      "type": "scenario",
+      "concept": "Keep workflow state small by passing blob-storage references instead of large payloads",
+      "question": "A healthcare platform's imaging workflow passes 50MB scan files directly as activity inputs and outputs between its analysis steps. The workflow engine's history storage is ballooning and replays are getting slow. What should the team change?",
+      "answer": "Store the scans in object storage and pass only references (URLs/keys) through workflow state, since every activity input and output is journaled into the event history. Workflow state should carry small pointers and metadata, never large payloads."
+    },
+    {
+      "id": "multi-step-processes-25",
+      "type": "scenario",
+      "concept": "Unbounded looping workflows need continue-as-new style history truncation",
+      "question": "A music-streaming service models each subscription as one long-lived workflow that loops forever: sleep until renewal, charge, handle failures, repeat monthly. After a couple of years, these workflows' event histories are enormous and replays crawl. What is the standard fix?",
+      "answer": "Periodically restart the workflow with a continue-as-new style operation: complete the current run and start a fresh one that carries forward only compact current state, resetting the event history. Perpetually looping workflows must truncate history or replay cost grows without bound."
+    },
+    {
+      "id": "multi-step-processes-26",
+      "type": "scenario",
+      "concept": "External events and human-in-the-loop: durable waits on signals with timeout timers",
+      "question": "A lending platform's loan workflow must stop after document collection and wait — possibly for days — for a human underwriter's decision, but escalate to a supervisor if nothing arrives within 72 hours. An engineer suggests an activity that polls the approvals table in a loop. What is the better model?",
+      "answer": "Have the workflow durably wait on an external signal (sent when the underwriter clicks approve) raced against a 72-hour durable timer that triggers escalation. The workflow consumes no compute while blocked, survives restarts, and this is the pattern's standard shape for webhooks and human-in-the-loop steps."
+    },
+    {
+      "id": "multi-step-processes-27",
+      "type": "scenario",
+      "concept": "Exactly-once external side effects are impossible; at-least-once plus receiver-side dedup gives effectively-once",
+      "question": "A crypto exchange's PM demands a hard guarantee that each withdrawal-confirmation email is sent exactly once, and an engineer replies that their workflow engine 'already guarantees exactly-once execution.' Is the engineer right, and what is the honest answer?",
+      "answer": "No — no engine can guarantee exactly-once external side effects, because an activity can succeed right as its acknowledgment is lost, forcing a retry. The honest guarantee is at-least-once execution plus deduplication at the receiving side (an idempotency key per withdrawal the email provider honors), yielding effectively-once outcomes."
+    },
+    {
+      "id": "multi-step-processes-28",
+      "type": "scenario",
+      "concept": "Interview signal: proactively articulate failure modes and recovery, since these workflows dominate production oncall",
+      "question": "In a mock system design interview about order fulfillment, a candidate cleanly diagrams payment, inventory, shipping, and email as a happy-path sequence and declares the design done. The interviewer looks unimpressed. According to this pattern's interview guidance, what is the candidate missing?",
+      "answer": "The senior signal is proactively walking the failure modes — a crash between charge and reserve, a retried step double-firing, a stuck workflow — and showing concretely how state persists and recovery works. Interviewers probe here deliberately because these processes dominate real teams' oncall, so a happy-path-only answer reads as junior."
+    }
+  ]
+}

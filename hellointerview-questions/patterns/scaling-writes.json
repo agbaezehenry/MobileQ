@@ -1,0 +1,234 @@
+{
+  "section": "patterns",
+  "subsection": "Scaling Writes",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/scaling-writes",
+  "concepts": [
+    "Read replicas and caches scale reads, not writes — writes still bottleneck on the primary",
+    "A single database has hard limits (disk I/O, CPU, network bandwidth); scaling the stateless app tier cannot fix it",
+    "Vertical scaling first: exhaust bigger hardware before adding distributed complexity",
+    "Storage engine choice: LSM-tree engines (Cassandra) trade read performance for sequential-write throughput vs B-tree engines (MySQL/Postgres)",
+    "Append-only logs (Kafka) reach extreme ingest rates via pure sequential I/O with no index or in-place-update overhead",
+    "Purpose-built time-series databases fit append-heavy timestamped ingestion with cheap retention",
+    "Horizontal sharding: partition writes by key so write capacity scales with node count",
+    "Partition key selection: distribute load evenly while co-locating related data for the dominant query",
+    "Monotonic/time-based partition keys create hot shards — all current writes hit one node",
+    "Vertical partitioning: isolate write-hot columns/tables from cold data into separate stores",
+    "Sharding trade-offs: cross-shard transactions, joins, and secondary-index queries become application problems once data is split",
+    "Write queues buffer short bursts, letting consumers drain at the database's sustainable rate",
+    "Queues don't fix sustained overload: if average arrival rate exceeds processing rate, backlog grows without bound",
+    "Async queued writes trade immediacy: ack-on-enqueue causes read-your-write visibility lag",
+    "Load shedding: prioritize critical writes and reject or defer low-value ones under overload",
+    "Sampling: deliberately persist only a statistical fraction of high-volume telemetry",
+    "Batching amortizes fixed per-write overhead (round trips, transaction commits, fsync) across many records",
+    "Batching trade-offs: in-memory buffer loss window on crash plus added flush latency",
+    "Hierarchical aggregation: multi-tier fan-in pre-aggregation slashes central write volume",
+    "Interview trigger: do back-of-envelope math comparing required write rate to single-node capacity",
+    "When NOT to use: modest write volumes fit one database — distributed write machinery is over-engineering",
+    "Scaling writes vs contention: many writers targeting one record is a concurrency problem sharding can't solve",
+    "Resharding pain: hash-mod-N remaps most keys when adding nodes; consistent hashing moves only ~1/N",
+    "Pre-provisioning many fixed logical partitions makes scale-out a partition move, not a rehash",
+    "Hot key problem: one key's write volume exceeds a single shard's capacity despite uniform key hashing",
+    "Split-all-keys mitigation: suffix every key across shards, paying read fan-out on every key including cold ones",
+    "Dynamic hot-key splitting: detect hot keys via monitoring and split only those, tracked in a registry",
+    "Core takeaway: write scaling is architectural (shard, queue, batch, aggregate), not just bigger hardware"
+  ],
+  "question_count": 28,
+  "questions": [
+    {
+      "id": "scaling-writes-01",
+      "type": "scenario",
+      "concept": "Read replicas and caches scale reads, not writes — writes still bottleneck on the primary",
+      "question": "TaskFlow, a project-management SaaS, sees its Postgres primary maxed out during business hours. The team adds three read replicas, but timeouts on task creation and updates don't improve at all. What is going wrong?",
+      "answer": "Replicas only offload reads — every write still funnels through the single primary. Fixing write capacity requires write-side techniques like sharding, queues, or batching, not more replicas."
+    },
+    {
+      "id": "scaling-writes-02",
+      "type": "scenario",
+      "concept": "A single database has hard limits (disk I/O, CPU, network bandwidth); scaling the stateless app tier cannot fix it",
+      "question": "A food-delivery app's order-event writes time out every dinner rush. The team doubles its stateless API servers, then doubles them again, but write latency doesn't budge. Why isn't this working?",
+      "answer": "The bottleneck is the single database, which has hard physical limits on disk I/O, CPU, and network bandwidth. Adding app servers just aims more concurrent writes at the same saturated node; the database tier itself must be scaled."
+    },
+    {
+      "id": "scaling-writes-03",
+      "type": "scenario",
+      "concept": "Vertical scaling first: exhaust bigger hardware before adding distributed complexity",
+      "question": "A fintech startup's ledger database runs on a mid-size cloud instance at about 80% write capacity, growing 5% per month. One engineer proposes a six-month project to shard it across ten nodes. What should the team do instead, and why?",
+      "answer": "Vertically scale first — move to a larger instance with faster NVMe storage and more memory. That buys substantial headroom immediately with zero architectural complexity; sharding is only justified once a genuinely large single node is near its ceiling."
+    },
+    {
+      "id": "scaling-writes-04",
+      "type": "scenario",
+      "concept": "Storage engine choice: LSM-tree engines (Cassandra) trade read performance for sequential-write throughput vs B-tree engines (MySQL/Postgres)",
+      "question": "A messaging app stores chat history in MySQL and has hit a write-throughput wall: profiling shows most time going to random-I/O B-tree index updates on every insert. An engineer suggests moving message storage to Cassandra. Why would that raise write throughput, and at what cost?",
+      "answer": "Cassandra's LSM-tree engine buffers writes in memory and flushes immutable SSTables sequentially, converting random writes into sequential appends that disks handle far faster. The cost is on the read path — reads may consult multiple SSTables and background compaction consumes resources."
+    },
+    {
+      "id": "scaling-writes-05",
+      "type": "scenario",
+      "concept": "Append-only logs (Kafka) reach extreme ingest rates via pure sequential I/O with no index or in-place-update overhead",
+      "question": "An ad-tech company lands a million click events per second into a modest Kafka cluster without trouble, yet the Postgres warehouse downstream chokes above roughly 20k inserts per second on similar hardware. Why can Kafka absorb write volumes the database can't?",
+      "answer": "Kafka only appends records sequentially to a log — no in-place updates, no B-tree index maintenance, no per-row transactional bookkeeping. Pure sequential I/O runs near raw disk throughput, so log-based systems ingest orders of magnitude more writes per node than a general-purpose database."
+    },
+    {
+      "id": "scaling-writes-06",
+      "type": "scenario",
+      "concept": "Purpose-built time-series databases fit append-heavy timestamped ingestion with cheap retention",
+      "question": "A server-monitoring SaaS inserts one relational-DB row per metric data point: timestamped, append-only, queried in recent time windows, and deleted after 30 days. Inserts are the bottleneck and the mass deletions cause table bloat. What storage change fits this workload, and why?",
+      "answer": "Move metrics to a time-series database. TSDBs are purpose-built for append-heavy timestamped ingestion — sequential writes, aggressive compression, and retention handled by dropping whole time chunks instead of expensive row-by-row deletes."
+    },
+    {
+      "id": "scaling-writes-07",
+      "type": "scenario",
+      "concept": "Horizontal sharding: partition writes by key so write capacity scales with node count",
+      "question": "A ride-hailing platform must ingest roughly 300k driver-location updates per second, but even the largest single database instance it benchmarked peaks far below that. What is the standard remedy, and what does it change about capacity?",
+      "answer": "Horizontally shard by a key such as driver_id so each database node receives only a fraction of the writes. Aggregate write capacity then scales roughly linearly with the number of shards instead of being capped by one machine's limits."
+    },
+    {
+      "id": "scaling-writes-08",
+      "type": "scenario",
+      "concept": "Partition key selection: distribute load evenly while co-locating related data for the dominant query",
+      "question": "An e-commerce company is sharding its orders table and is torn between order_id (perfectly uniform) and customer_id as the partition key. The most common query by far is 'fetch all orders for a given customer.' Which key is the better choice, and why?",
+      "answer": "customer_id — with millions of customers it still spreads write load evenly, and it keeps each customer's orders on one shard so the dominant query never fans out cluster-wide. A good partition key balances even distribution with keeping related data together."
+    },
+    {
+      "id": "scaling-writes-09",
+      "type": "scenario",
+      "concept": "Monotonic/time-based partition keys create hot shards — all current writes hit one node",
+      "question": "A news publisher shards its article-analytics events by calendar date across eight nodes. Monitoring shows one node pinned at 100% while the other seven idle, and the overloaded node rotates at midnight. What is going wrong?",
+      "answer": "Date is a monotonic partition key: at any moment every incoming write targets 'today's' shard, so the cluster delivers single-node throughput no matter how many shards exist. Partition on a high-cardinality, evenly distributed key (like a hashed article or user ID) instead."
+    },
+    {
+      "id": "scaling-writes-10",
+      "type": "scenario",
+      "concept": "Vertical partitioning: isolate write-hot columns/tables from cold data into separate stores",
+      "question": "A social network keeps posts in one table: mostly-immutable content columns alongside a like_count column receiving millions of increments per hour, which drags down every write to the table. How should they restructure the data?",
+      "answer": "Vertically partition: pull the write-hot counter out into its own store — a separate table, database, or an in-memory store like Redis. The high-churn data stops contending with the cold content, and each store can be tuned and scaled for its own workload."
+    },
+    {
+      "id": "scaling-writes-11",
+      "type": "scenario",
+      "concept": "Sharding trade-offs: cross-shard transactions, joins, and secondary-index queries become application problems once data is split",
+      "question": "A marketplace shards its database by seller_id and write throughput improves as hoped. But checkout orders that span two sellers can no longer be wrapped in one ACID transaction, and the analytics dashboard's cross-seller joins now have to query every shard and merge results in code. What did the team give up, and what is the lesson?",
+      "answer": "Sharding trades away the guarantees a single database provided for free: transactions, joins, and secondary-index queries that cross shard boundaries must now be rebuilt or approximated in the application. Shard only when write volume genuinely demands it, and choose a partition key that keeps the dominant transactional queries on one shard."
+    },
+    {
+      "id": "scaling-writes-12",
+      "type": "scenario",
+      "concept": "Write queues buffer short bursts, letting consumers drain at the database's sustainable rate",
+      "question": "A ticketing platform's database handles normal traffic easily, but the first two minutes of a big on-sale bring a 50x write spike that crashes it. Averaged over an hour, utilization stays under 20%. What should the team add, and why does it fit?",
+      "answer": "A write queue (Kafka, SQS) between the API and the database. The queue absorbs the two-minute burst while consumers drain it at the database's sustainable rate — exactly right for spiky traffic whose average load is modest."
+    },
+    {
+      "id": "scaling-writes-13",
+      "type": "scenario",
+      "concept": "Queues don't fix sustained overload: if average arrival rate exceeds processing rate, backlog grows without bound",
+      "question": "After overload incidents, an email-marketing platform put Kafka in front of its event database. Nothing crashes anymore, but consumer lag has grown continuously for three days and events now process hours late. What is the actual problem?",
+      "answer": "The average arrival rate exceeds downstream processing capacity, so the queue is just an ever-growing backlog. Queues only smooth temporary bursts — sustained overload requires more downstream throughput (sharding, batching) or shedding load."
+    },
+    {
+      "id": "scaling-writes-14",
+      "type": "scenario",
+      "concept": "Async queued writes trade immediacy: ack-on-enqueue causes read-your-write visibility lag",
+      "question": "A restaurant-review app moved review submissions onto a queue-backed pipeline. Users now complain that right after posting, their review seems to vanish — refreshing shows nothing for several seconds before it finally appears. What is the cause, and what is the lesson?",
+      "answer": "The API acknowledges when the review is enqueued, not when it's persisted, so there's a visibility gap before the data is readable. That read-your-write lag is the inherent price of async writes — mask it with optimistic UI rendering or keep truly critical writes synchronous."
+    },
+    {
+      "id": "scaling-writes-15",
+      "type": "scenario",
+      "concept": "Load shedding: prioritize critical writes and reject or defer low-value ones under overload",
+      "question": "A stock brokerage's ingestion tier handles both customer order records and high-volume clickstream telemetry. During market-open surges the pipeline saturates and order writes start failing right alongside telemetry writes. What strategy should they implement?",
+      "answer": "Load shedding with priorities: under pressure, reject or defer the low-value telemetry so full capacity protects the critical order writes. Not all writes are equally important — deliberately degrading the unimportant ones beats failing uniformly."
+    },
+    {
+      "id": "scaling-writes-16",
+      "type": "scenario",
+      "concept": "Sampling: deliberately persist only a statistical fraction of high-volume telemetry",
+      "question": "A mobile game uploads every single player-movement event — billions per day — into its analytics pipeline, and ingest costs are exploding. The product team only ever looks at aggregate heatmaps and trend charts. What is the fix?",
+      "answer": "Sample: persist only one in N movement events (or pre-aggregate on the client). Aggregate analytics remain statistically accurate without every raw event, so deliberately dropping redundant data is a legitimate write-reduction tool."
+    },
+    {
+      "id": "scaling-writes-17",
+      "type": "scenario",
+      "concept": "Batching amortizes fixed per-write overhead (round trips, transaction commits, fsync) across many records",
+      "question": "A warehouse-robotics fleet of 10,000 robots each issues an individual INSERT per sensor reading every second. Profiling shows database load dominated by connection handling, per-transaction commit and fsync overhead rather than actual data volume. What should change?",
+      "answer": "Batch the writes: buffer readings and insert hundreds or thousands per multi-row statement or transaction. The fixed per-write costs — network round trips, commit/fsync, index touches — get amortized across the whole batch, often improving throughput by 10x or more."
+    },
+    {
+      "id": "scaling-writes-18",
+      "type": "scenario",
+      "concept": "Batching trade-offs: in-memory buffer loss window on crash plus added flush latency",
+      "question": "A web-analytics startup buffers pageview events in application memory and flushes them to the database every 10 seconds. After a server crash, customers notice a gap in their traffic graphs, and a PM asks whether batching was a mistake. What is the honest answer?",
+      "answer": "This is batching's inherent trade-off: events buffered but not yet flushed die with the process, and the flush interval defines both the loss window and the added latency. If the data can't be lossy, shrink the interval or stage events in a durable log like Kafka before batching."
+    },
+    {
+      "id": "scaling-writes-19",
+      "type": "scenario",
+      "concept": "Hierarchical aggregation: multi-tier fan-in pre-aggregation slashes central write volume",
+      "question": "An electricity utility's five million smart meters each report usage every 10 seconds straight to one central database, which cannot keep up. The business only needs per-neighborhood and per-region totals at minute granularity. What architecture handles this?",
+      "answer": "Hierarchical aggregation: pre-aggregate at the edge or neighborhood tier, combine at a regional tier, and write only compact rollups to the central store. Each fan-in level cuts write volume by orders of magnitude, at the cost of extra moving parts and slight staleness."
+    },
+    {
+      "id": "scaling-writes-20",
+      "type": "scenario",
+      "concept": "Interview trigger: do back-of-envelope math comparing required write rate to single-node capacity",
+      "question": "In a mock system design interview for an ad-click aggregator handling 500k clicks per second, the candidate immediately starts drawing boxes and services. What step did they skip, and why does it matter?",
+      "answer": "Back-of-envelope math comparing the required write rate to single-node capacity — a single relational database sustains on the order of tens of thousands of simple writes per second. 500k/sec is 10-50x beyond one node, and that calculation is what justifies sharding, queues, and aggregation; without it the design is unmotivated."
+    },
+    {
+      "id": "scaling-writes-21",
+      "type": "scenario",
+      "concept": "When NOT to use: modest write volumes fit one database — distributed write machinery is over-engineering",
+      "question": "Designing an internal HR tool that peaks around 100 writes per minute, a candidate proposes a 12-node Cassandra ring fed by Kafka. As the interviewer, what feedback do you give?",
+      "answer": "It's over-engineering: 100 writes per minute fits trivially in a single relational database, so distributed write machinery adds cost, complexity, and failure modes for nothing. Knowing when the pattern is NOT needed is itself a judgment signal interviewers grade."
+    },
+    {
+      "id": "scaling-writes-22",
+      "type": "scenario",
+      "concept": "Scaling writes vs contention: many writers targeting one record is a concurrency problem sharding can't solve",
+      "question": "A sneaker marketplace's flash drops keep failing: 50,000 buyers hit purchase on the same limited-edition shoe with 200 units in stock, causing oversells and deadlocks. The team plans to shard the inventory table across 10 nodes. Why won't that help?",
+      "answer": "This is a contention problem, not a throughput problem: every write targets the same inventory row, which lives on exactly one shard no matter how many exist. It needs concurrency-control techniques — atomic operations, locking, or serialized processing — which is the 'dealing with contention' pattern, not scaling writes."
+    },
+    {
+      "id": "scaling-writes-23",
+      "type": "scenario",
+      "concept": "Resharding pain: hash-mod-N remaps most keys when adding nodes; consistent hashing moves only ~1/N",
+      "question": "A URL shortener spreads links across 4 shards using hash(short_code) mod 4. When adding a fifth shard, the team discovers that the vast majority of existing keys now map to a different shard, forcing a massive data migration. What scheme avoids this?",
+      "answer": "Consistent hashing: nodes and keys map onto a hash ring, so adding a node relocates only roughly 1/N of the keys instead of the (N-1)/N that mod-N remaps. Mod-N routing hard-couples every key's placement to the node count, which is exactly what breaks during resharding."
+    },
+    {
+      "id": "scaling-writes-24",
+      "type": "scenario",
+      "concept": "Pre-provisioning many fixed logical partitions makes scale-out a partition move, not a rehash",
+      "question": "A note-taking SaaS needs only 4 database servers today but expects heavy growth. How should they design their sharding scheme now so future scale-outs never require rehashing keys?",
+      "answer": "Pre-create a large fixed number of logical partitions (say 256) and map many to each physical node. Scaling out then means moving whole partitions to new machines — the key-to-partition mapping never changes, so there's no rehash and no per-key migration logic."
+    },
+    {
+      "id": "scaling-writes-25",
+      "type": "scenario",
+      "concept": "Hot key problem: one key's write volume exceeds a single shard's capacity despite uniform key hashing",
+      "question": "A video platform shards view counters by video_id and has verified the hash distributes keys uniformly. Yet when one video goes viral with 800k view-writes per second, a single shard melts down while the others sit idle. Why didn't uniform sharding save them?",
+      "answer": "It's a hot key: all writes for a given key must land on that key's one shard, and this single key alone exceeds a node's write capacity. Key-based sharding balances load across keys — it can do nothing when one key is the entire problem."
+    },
+    {
+      "id": "scaling-writes-26",
+      "type": "scenario",
+      "concept": "Split-all-keys mitigation: suffix every key across shards, paying read fan-out on every key including cold ones",
+      "question": "To handle occasional hot counters, a live-streaming service appends a random suffix (1-16) to every viewer-count key, spreading each counter across 16 shards. Write hot spots are gone, but reads have become slower and costlier across the entire service. Why?",
+      "answer": "Splitting every key means every read — including the millions of cold counters — must fan out to all 16 sub-keys and sum them. The split-all-keys approach buys write headroom for the rare hot keys at a read-amplification cost paid by everyone."
+    },
+    {
+      "id": "scaling-writes-27",
+      "type": "scenario",
+      "concept": "Dynamic hot-key splitting: detect hot keys via monitoring and split only those, tracked in a registry",
+      "question": "In a polling app, 99.9% of polls get modest vote traffic, but a few go mega-viral each week and overwhelm their shard. The team wants hot-key protection without slowing down reads for ordinary polls. Which splitting variant fits, and what does it require?",
+      "answer": "Dynamically split only detected hot keys: monitor per-key write rates, split a key across sub-keys once it crosses a threshold, and record it in a registry so readers know which keys need fan-out. The long tail keeps cheap single-key reads; the price is detection and bookkeeping machinery."
+    },
+    {
+      "id": "scaling-writes-28",
+      "type": "true_false",
+      "concept": "Core takeaway: write scaling is architectural (shard, queue, batch, aggregate), not just bigger hardware",
+      "question": "Scaling writes is fundamentally a hardware problem: with a big enough single machine, architectural changes like sharding, queues, and batching are unnecessary at any scale.",
+      "answer": "False — a single machine hits hard ceilings on disk I/O, CPU, and network bandwidth, so beyond that point only architectural techniques (sharding and partitioning, queues with load shedding, batching, and hierarchical aggregation) keep write throughput growing."
+    }
+  ]
+}

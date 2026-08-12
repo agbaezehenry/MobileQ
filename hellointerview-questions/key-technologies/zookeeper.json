@@ -1,0 +1,258 @@
+{
+  "section": "key-technologies",
+  "subsection": "ZooKeeper",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/zookeeper",
+  "concepts": [
+    "Recognizing a distributed coordination problem (shared registry of which server owns what)",
+    "ZNode payload limit (~1MB) and metadata-only hierarchical data model",
+    "Ephemeral znodes: session-bound lifecycle as automatic failure detection",
+    "Sequential znodes: server-assigned unique, monotonically ordered names",
+    "ZNode version numbers and conditional writes (optimistic concurrency control)",
+    "Quorum math and odd-sized ensembles (majority rule, fault tolerance counts)",
+    "Write latency grows as the voting ensemble grows — keep 3-5 voters",
+    "Observer role: read scaling without enlarging the write quorum",
+    "All writes are funneled through and ordered by the single leader",
+    "Watches are one-shot triggers that deliver latest state, not every intermediate change",
+    "Push-based watches vs client polling for config propagation",
+    "Service discovery via ephemeral registrations plus child watches (auto-deregistration)",
+    "Leader election recipe: ephemeral-sequential znodes, lowest sequence wins",
+    "Herd effect avoidance: each waiter watches only its immediate predecessor",
+    "Crash-safe locks: session-tied ephemeral release vs fixed TTL leases",
+    "ZAB quorum-acknowledged commits: acked writes survive leader failure",
+    "Linearizable writes but sequentially consistent (possibly stale) follower reads",
+    "Global total order of updates: every client observes writes in the same zxid sequence",
+    "sync() to force a connected server to catch up before a read",
+    "Session timeout tuning trade-off: false expirations (GC pauses) vs slow crash detection",
+    "Sessions are ensemble-wide and survive failover to another server",
+    "Durability mechanics: in-memory tree backed by transaction log (WAL) and snapshots",
+    "Brief write-unavailability window during ZAB leader re-election, reads continue",
+    "Majority-partition rule: CP behavior, minority side goes dark to prevent split-brain",
+    "Kafka's KRaft migration and the trend toward embedded consensus",
+    "Continued ZooKeeper reliance across the Apache ecosystem (HBase, Solr, Hadoop)",
+    "etcd as the coordination layer when already on Kubernetes (Raft, leases, watches)",
+    "Consul's health-check-driven, DNS-based service discovery vs ZooKeeper's raw primitives",
+    "Anti-pattern: using ZooKeeper as a message queue or high-throughput data plane",
+    "Interview strategy: delegate coordination to ZooKeeper/etcd instead of hand-rolling consensus"
+  ],
+  "question_count": 30,
+  "questions": [
+    {
+      "id": "zookeeper-01",
+      "type": "scenario",
+      "concept": "Recognizing a distributed coordination problem (shared registry of which server owns what)",
+      "question": "PingPal, a chat startup, ran happily on one server: every message was delivered in-process because that single server held every user's connection. After scaling to three servers behind a load balancer, messages routinely go undelivered whenever the sender and recipient landed on different servers. What class of problem has the team hit, and what kind of component solves it?",
+      "answer": "This is a distributed coordination problem: no server knows which peer holds a given user's connection anymore. They need a consistent shared registry — a coordination service like ZooKeeper — mapping each user's session to its server so any server can route messages correctly."
+    },
+    {
+      "id": "zookeeper-02",
+      "type": "scenario",
+      "concept": "ZNode payload limit (~1MB) and metadata-only hierarchical data model",
+      "question": "Dashly, an analytics SaaS, started storing whole dashboard-template blobs — some several megabytes — inside ZooKeeper znodes 'since it's already replicated.' Writes for the biggest templates fail outright, and the smaller ones have ballooned memory usage on every ensemble node. What is wrong with this design?",
+      "answer": "ZNodes are capped at roughly 1 MB and the entire tree is held in memory on every server — ZooKeeper is a small-metadata store, not a blob store. Put the templates in object storage and keep only a pointer and version number in the znode."
+    },
+    {
+      "id": "zookeeper-03",
+      "type": "scenario",
+      "concept": "Ephemeral znodes: session-bound lifecycle as automatic failure detection",
+      "question": "SensorGrid registers each field gateway by creating a persistent znode in ZooKeeper at startup. The ops dashboard, which lists those znodes, still shows gateways that burned out weeks ago. What should the team change, and why?",
+      "answer": "Register with ephemeral znodes instead. An ephemeral node is tied to the creating client's session and is deleted automatically when that session dies, so crashed gateways drop out of the registry on their own instead of lingering forever."
+    },
+    {
+      "id": "zookeeper-04",
+      "type": "scenario",
+      "concept": "Sequential znodes: server-assigned unique, monotonically ordered names",
+      "question": "PayFlow's settlement workers each create a znode under /workers using names generated client-side. Occasionally two workers pick the same name, one create fails, and the retry logic is a mess. The team also wants a stable ordering of workers for fair task handoff. Which znode feature fixes both issues?",
+      "answer": "Sequential znodes. ZooKeeper appends a monotonically increasing counter to the name it assigns, so every create is guaranteed unique and the counters give a natural total order across workers."
+    },
+    {
+      "id": "zookeeper-05",
+      "type": "scenario",
+      "concept": "ZNode version numbers and conditional writes (optimistic concurrency control)",
+      "question": "Two admin tools at TixHub edit the same /config/pricing znode: each reads the JSON blob, changes one field, and writes the whole thing back. Occasionally one tool's change silently vanishes seconds after being saved, even though both writes reported success. Which ZooKeeper feature prevents this lost-update race?",
+      "answer": "Version-conditioned writes: every znode carries a version number that increments on each update, and setData can demand the exact version the writer last read, failing if anyone wrote in between. The loser re-reads and retries instead of blindly overwriting — optimistic concurrency control built into the data model."
+    },
+    {
+      "id": "zookeeper-06",
+      "type": "scenario",
+      "concept": "Quorum math and odd-sized ensembles (majority rule, fault tolerance counts)",
+      "question": "SeatRush runs a 6-node ZooKeeper ensemble, reasoning that six servers means they can afford to lose three. During a rack failure that took out three nodes at once, the entire ensemble stopped serving. What did they get wrong?",
+      "answer": "Quorum is a strict majority: 6 nodes need 4 alive, so a 6-node ensemble tolerates only 2 failures — the same as a 5-node one. That's why ensembles use odd sizes; surviving three simultaneous losses requires 7 nodes."
+    },
+    {
+      "id": "zookeeper-07",
+      "type": "scenario",
+      "concept": "Write latency grows as the voting ensemble grows — keep 3-5 voters",
+      "question": "A game studio grew its ZooKeeper ensemble from 5 voting servers to 11 to 'add capacity' for matchmaking metadata. Read latency stayed fine, but write latency got noticeably worse. Why?",
+      "answer": "Every write must be acknowledged by a majority of voters, so more voting members means more machines must coordinate on each commit — writes get slower, not faster. Keep the voting set at 3-5 and scale reads by other means."
+    },
+    {
+      "id": "zookeeper-08",
+      "type": "scenario",
+      "concept": "Observer role: read scaling without enlarging the write quorum",
+      "question": "TeamBoard serves users on three continents and wants low-latency ZooKeeper reads in every region, but adding regional servers as voters would drag each write through cross-continent quorum round trips. What ZooKeeper server role solves this?",
+      "answer": "Observers. They replicate state and serve reads locally but don't vote, so they add regional read capacity without enlarging the write quorum or adding WAN latency to commits."
+    },
+    {
+      "id": "zookeeper-09",
+      "type": "scenario",
+      "concept": "All writes are funneled through and ordered by the single leader",
+      "question": "Streamz monitors its 5-node ZooKeeper ensemble and sees one node with far higher CPU and network usage than the other four, even though client connections are evenly load-balanced across all five. Is something broken?",
+      "answer": "No — that node is the leader. Every write from any client is forwarded to the single leader, which proposes and orders it, while followers mainly serve reads. The leader naturally runs hotter."
+    },
+    {
+      "id": "zookeeper-10",
+      "type": "scenario",
+      "concept": "Watches are one-shot triggers that deliver latest state, not every intermediate change",
+      "question": "An API-gateway team caches per-tenant rate limits from a znode and sets a watch to refresh the cache. When an admin updates a tenant's limit twice within a second, gateways sometimes see only the final value and never the middle one. What watch behavior explains this?",
+      "answer": "ZooKeeper watches are one-shot: after a watch fires you must re-read and re-register, and changes that happen in that gap are not individually delivered. Watches guarantee you learn the latest state, not that you observe every intermediate update."
+    },
+    {
+      "id": "zookeeper-11",
+      "type": "scenario",
+      "concept": "Push-based watches vs client polling for config propagation",
+      "question": "ShopNest's 800 storefront servers each poll ZooKeeper every 2 seconds to check whether a feature flag changed. The ensemble is drowning in read traffic, and flag flips still take up to 2 seconds to reach servers. What is the idiomatic fix?",
+      "answer": "Replace polling with watches: each server reads the flag once and registers a watch, and ZooKeeper pushes a notification the moment the znode changes. Propagation becomes near-instant and the constant polling load disappears."
+    },
+    {
+      "id": "zookeeper-12",
+      "type": "scenario",
+      "concept": "Service discovery via ephemeral registrations plus child watches (auto-deregistration)",
+      "question": "RideLoop's API layer keeps a static file listing its dispatch-service IPs. When a dispatch instance crashes, requests keep hitting the dead IP until an engineer edits the file. How would ZooKeeper-based service discovery fix this?",
+      "answer": "Each dispatch instance registers an ephemeral znode under a path like /services/dispatch, and clients list the children and set a watch. When an instance crashes its session lapses, its znode vanishes, and all watchers are notified — the registry stays current with zero manual edits."
+    },
+    {
+      "id": "zookeeper-13",
+      "type": "scenario",
+      "concept": "Leader election recipe: ephemeral-sequential znodes, lowest sequence wins",
+      "question": "CronCloud runs three replicas of its job scheduler for resilience, but exactly one may fire jobs at any moment; lately all three occasionally run the same job. Describe the standard ZooKeeper recipe that gives them a single active scheduler with automatic failover.",
+      "answer": "Each replica creates an ephemeral sequential znode under an election path; the replica holding the lowest sequence number is the leader. If the leader dies, its session expires, its znode disappears, and the next-lowest replica takes over automatically."
+    },
+    {
+      "id": "zookeeper-14",
+      "type": "scenario",
+      "concept": "Herd effect avoidance: each waiter watches only its immediate predecessor",
+      "question": "StreamForge has 400 transcoding workers contending for a ZooKeeper-based lock. Every time the lock is released, all 400 workers wake simultaneously and slam the ensemble with requests, causing latency spikes. What is this called, and how does the standard recipe avoid it?",
+      "answer": "That's the herd (thundering herd) effect. In the correct recipe each waiter watches only the znode with the next-lower sequence number — its immediate predecessor — so a release wakes exactly one client instead of all of them."
+    },
+    {
+      "id": "zookeeper-15",
+      "type": "scenario",
+      "concept": "Crash-safe locks: session-tied ephemeral release vs fixed TTL leases",
+      "question": "FreightIQ guards its nightly billing job with a Redis lock carrying a 10-minute TTL. On heavy nights the job runs longer than the TTL, the lock silently expires mid-job, and a second runner starts. How does a ZooKeeper ephemeral-node lock avoid this specific failure?",
+      "answer": "A ZooKeeper lock is held as long as the holder's session stays alive via heartbeats — there is no fixed expiry to outlive. The lock releases when the holder actually disconnects or crashes, not when an arbitrary timer fires while the work is still running."
+    },
+    {
+      "id": "zookeeper-16",
+      "type": "scenario",
+      "concept": "ZAB quorum-acknowledged commits: acked writes survive leader failure",
+      "question": "A core-banking team asks: if ZooKeeper acknowledges our write and the leader machine dies a millisecond later, can that write vanish when a new leader takes over? What does ZAB guarantee here?",
+      "answer": "No. ZAB acknowledges a write only after a majority of the ensemble has logged the proposal, and the new leader is elected from that majority with the most complete history — so every acknowledged write survives leader failure."
+    },
+    {
+      "id": "zookeeper-17",
+      "type": "scenario",
+      "concept": "Linearizable writes but sequentially consistent (possibly stale) follower reads",
+      "question": "QuantDesk's risk service writes an updated position limit to ZooKeeper; milliseconds later a separate trading service reads the same znode and gets the old limit, with no errors anywhere. What is going on?",
+      "answer": "Reads are answered locally by whichever server the client is connected to, which may lag the leader slightly — ZooKeeper guarantees linearizable writes but only sequentially consistent reads. A briefly stale read from a follower is expected behavior, not a bug."
+    },
+    {
+      "id": "zookeeper-18",
+      "type": "scenario",
+      "concept": "Global total order of updates: every client observes writes in the same zxid sequence",
+      "question": "FeatureFlagCo makes two ZooKeeper writes in order: first it disables flag A, then it enables flag B, because B is only safe once A is off. An engineer worries that app servers reading from different followers might observe B enabled while A is still on — a combination that never existed at the leader. Can that happen?",
+      "answer": "No. ZAB stamps every committed write with a monotonically increasing zxid and every server applies writes in that single global order, so any server that shows B's change has already applied A's. A lagging replica can show an older prefix of history, but never a reordered or mixed one."
+    },
+    {
+      "id": "zookeeper-19",
+      "type": "scenario",
+      "concept": "sync() to force a connected server to catch up before a read",
+      "question": "CartLock's inventory reconciler must, at one critical step, read the absolute latest value of a znode that other services write — a slightly stale follower read would corrupt the reconciliation. What does ZooKeeper offer for this?",
+      "answer": "Call sync() on the path before reading. sync() forces the server the client is connected to to catch up with the leader, so the read that follows reflects every write committed before the sync."
+    },
+    {
+      "id": "zookeeper-20",
+      "type": "scenario",
+      "concept": "Session timeout tuning trade-off: false expirations (GC pauses) vs slow crash detection",
+      "question": "SearchLite's Java coordinator keeps losing its ZooKeeper leadership during 12-second full-GC pauses even though the process is perfectly healthy, triggering pointless failovers. What is happening, and what is the trade-off in fixing it?",
+      "answer": "The GC pause stops heartbeats longer than the session timeout, so ZooKeeper expires the session and deletes the ephemeral leader node. Raising the timeout stops the false failovers but slows detection of genuinely dead nodes — session timeout tuning is exactly this trade-off."
+    },
+    {
+      "id": "zookeeper-21",
+      "type": "scenario",
+      "concept": "Sessions are ensemble-wide and survive failover to another server",
+      "question": "During routine patching, HuddleChat's ops team restarts ZooKeeper servers one at a time. A new engineer expects users' presence entries (ephemeral znodes) to flap whenever the server a client is connected to restarts, but they never do. Why not?",
+      "answer": "Sessions belong to the ensemble, not to one server. When a client's server goes down, the client reconnects to another ensemble member within the session timeout, the session continues uninterrupted, and its ephemeral nodes are untouched."
+    },
+    {
+      "id": "zookeeper-22",
+      "type": "scenario",
+      "concept": "Durability mechanics: in-memory tree backed by transaction log (WAL) and snapshots",
+      "question": "A full power failure took down every node of BuildHub's ZooKeeper ensemble at once, yet the cluster came back with all znode data intact — surprising an engineer who had read that ZooKeeper 'keeps everything in memory.' How is that possible?",
+      "answer": "The in-memory tree is backed by a write-ahead transaction log fsynced before each commit is acknowledged, plus periodic snapshots. On restart each server loads the latest snapshot and replays the log, rebuilding the exact state."
+    },
+    {
+      "id": "zookeeper-23",
+      "type": "scenario",
+      "concept": "Brief write-unavailability window during ZAB leader re-election, reads continue",
+      "question": "An SRE at Snackly, a food-delivery platform, kills one ZooKeeper node as a chaos experiment. Reads continue uninterrupted, but every write fails for about two seconds before things recover on their own. What happened?",
+      "answer": "The killed node was the leader. Writes paused while the remaining majority ran ZAB leader election and synced with the new leader — a brief, expected write-unavailability window — while followers kept serving reads throughout."
+    },
+    {
+      "id": "zookeeper-24",
+      "type": "scenario",
+      "concept": "Majority-partition rule: CP behavior, minority side goes dark to prevent split-brain",
+      "question": "OpsPanel runs a 5-node ensemble split 3-2 across two data centers. When the inter-DC link fails, applications in the smaller DC lose all ZooKeeper service even though both local ZooKeeper servers are perfectly healthy. Is this a bug?",
+      "answer": "No — it's the design. Only the partition holding a majority (the 3-node side) may keep operating; the 2-node minority deliberately refuses service so two independent leaders can never coexist. ZooKeeper chooses consistency over availability, and that refusal is precisely what prevents split-brain."
+    },
+    {
+      "id": "zookeeper-25",
+      "type": "scenario",
+      "concept": "Kafka's KRaft migration and the trend toward embedded consensus",
+      "question": "A messaging platform upgrading to a current Kafka version has budgeted for a new dedicated ZooKeeper ensemble because 'Kafka needs ZooKeeper.' What should they know before spending the money?",
+      "answer": "Modern Kafka replaced ZooKeeper with KRaft, an embedded Raft quorum run by the brokers/controllers themselves, so no external ensemble is needed. It reflects a broader trend of systems internalizing consensus rather than depending on ZooKeeper."
+    },
+    {
+      "id": "zookeeper-26",
+      "type": "true_false",
+      "concept": "Continued ZooKeeper reliance across the Apache ecosystem (HBase, Solr, Hadoop)",
+      "question": "True or False: Now that Kafka has moved to KRaft, no widely used open-source system still depends on ZooKeeper, so studying it has no practical payoff.",
+      "answer": "False. ZooKeeper remains central to the Apache ecosystem — HBase, SolrCloud, and Hadoop's HA components still rely on it — and its recipes teach coordination concepts that transfer directly to every modern alternative."
+    },
+    {
+      "id": "zookeeper-27",
+      "type": "scenario",
+      "concept": "etcd as the coordination layer when already on Kubernetes (Raft, leases, watches)",
+      "question": "A platform team running everything on Kubernetes needs leader election and shared config for a new custom controller, and proposes standing up a three-node ZooKeeper ensemble for it. What is the leaner alternative, and why?",
+      "answer": "Use etcd — the Raft-based coordination store already powering the Kubernetes control plane, with leases and watches as its coordination primitives (and Kubernetes exposes a Lease-based election API on top). A separate ZooKeeper ensemble adds operational burden for capabilities the platform already provides."
+    },
+    {
+      "id": "zookeeper-28",
+      "type": "mcq2",
+      "concept": "Consul's health-check-driven, DNS-based service discovery vs ZooKeeper's raw primitives",
+      "question": "A polyglot microservices company mainly needs service discovery with active health checking — instances should drop from the registry when they fail HTTP health probes, and services should locate each other via DNS. Which tool fits better out of the box?",
+      "options": [
+        "Consul",
+        "ZooKeeper"
+      ],
+      "answer": "Consul — it is purpose-built for service discovery with built-in application-level health checks and DNS/HTTP interfaces, whereas ZooKeeper offers only low-level primitives you must assemble yourself and can detect liveness only via session loss, not failing health probes."
+    },
+    {
+      "id": "zookeeper-29",
+      "type": "scenario",
+      "concept": "Anti-pattern: using ZooKeeper as a message queue or high-throughput data plane",
+      "question": "A startup built its work queue on ZooKeeper: producers create sequential znodes for each task and consumers claim and delete them. At a few thousand tasks per second the ensemble is melting down. Why is this the wrong tool?",
+      "answer": "ZooKeeper is a control-plane metadata store: every write is a quorum commit through a single leader, all data lives in RAM, and heavy znode-and-watch churn overwhelms it. High-throughput task flow belongs in a real queue like Kafka or SQS — use ZooKeeper to coordinate the consumers, not to carry the tasks."
+    },
+    {
+      "id": "zookeeper-30",
+      "type": "mcq2",
+      "concept": "Interview strategy: delegate coordination to ZooKeeper/etcd instead of hand-rolling consensus",
+      "question": "In a system design interview, your design needs exactly one active job scheduler with automatic failover. Which answer plays better with the interviewer?",
+      "options": [
+        "Sketch a custom leader-election protocol built on database heartbeat rows and timestamps",
+        "Delegate to an off-the-shelf coordination service like ZooKeeper or etcd and spend the time on your core design"
+      ],
+      "answer": "Delegate to an off-the-shelf coordination service like ZooKeeper or etcd and spend the time on your core design — hand-rolling consensus is subtly error-prone and a known red flag; interviewers want you to recognize coordination as a solved problem and reach for a battle-tested tool."
+    }
+  ]
+}

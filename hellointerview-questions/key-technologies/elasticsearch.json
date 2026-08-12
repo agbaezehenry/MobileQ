@@ -1,0 +1,350 @@
+{
+  "section": "key-technologies",
+  "subsection": "Elasticsearch",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/elasticsearch",
+  "concepts": [
+    "Inverted index fundamentals",
+    "Documents, indices, and mappings as the core data model",
+    "Mapping only searchable fields",
+    "text vs keyword field types",
+    "Tokenization of text fields",
+    "Stemming",
+    "Fuzzy matching via edit distance",
+    "Optimistic concurrency via document versions",
+    "Partial updates via the _update endpoint",
+    "Cost of frequent document updates",
+    "Bool queries for combining conditions",
+    "from/size deep pagination penalty",
+    "search_after pagination",
+    "Point-in-Time consistent pagination",
+    "geo_shape for polygon zones",
+    "geo_distance radius queries",
+    "Script-based sorting",
+    "Nested field type and nested queries",
+    "Relevance scoring with _score",
+    "Doc values for sorting and aggregations",
+    "Shards for horizontal partitioning",
+    "Replicas for throughput and availability",
+    "Master node role",
+    "Dedicated coordinating nodes",
+    "Ingest nodes and pipelines",
+    "Hot/warm/cold data tiers",
+    "Immutable segments and append-only writes",
+    "Tombstone deletes and delayed space reclamation",
+    "Segment merging",
+    "Query planner term-order optimization",
+    "Near-real-time search and staleness",
+    "Not a system of record",
+    "CDC synchronization and drift",
+    "Write buffering for write-heavy ingestion",
+    "Small-dataset threshold",
+    "Denormalization for search",
+    "Postgres full-text as an alternative",
+    "Interview depth expectations by seniority",
+    "Immutability as a general design lesson",
+    "Separating query execution from storage",
+    "Specialized data structures as a design lesson"
+  ],
+  "question_count": 41,
+  "questions": [
+    {
+      "id": "elasticsearch-01",
+      "type": "scenario",
+      "concept": "Inverted index fundamentals",
+      "question": "An e-commerce site implements product search as SQL `WHERE description LIKE '%mug%'` over 40 million rows, and p99 latency is 8 seconds. The team is evaluating Elasticsearch and asks what it would actually do differently under the hood. What data structure makes the difference, and how does it work?",
+      "answer": "The inverted index: at index time every document is broken into terms, and the index maps each term to the list of documents containing it. A query becomes a cheap lookup of the term's posting list (plus list intersections) instead of scanning every row's text."
+    },
+    {
+      "id": "elasticsearch-02",
+      "type": "scenario",
+      "concept": "Documents, indices, and mappings as the core data model",
+      "question": "A backend team coming from Postgres is planning its first Elasticsearch deployment for a podcast app and keeps asking where the tables, rows, and schema live. Translating their relational vocabulary, what are the three core Elasticsearch constructs they will work with, and what does each hold?",
+      "answer": "An index is the table-like collection you search against, each document in it is a JSON object playing the role of a row, and the mapping is the index's schema declaring which fields exist, their types, and how they are indexed. Searches run against an index and return matching documents."
+    },
+    {
+      "id": "elasticsearch-03",
+      "type": "scenario",
+      "concept": "Mapping only searchable fields",
+      "question": "A CRM SaaS pushes its full 45-field contact object into Elasticsearch, though the search UI only ever queries name and company. The cluster's memory and index size are far larger than the data volume seems to justify. What should the team change?",
+      "answer": "Map and index only the fields users actually search — the other 43 fields are paying indexing and memory overhead for nothing. Keep the full record in the primary database and fetch it by ID after the search returns matches."
+    },
+    {
+      "id": "elasticsearch-04",
+      "type": "scenario",
+      "concept": "text vs keyword field types",
+      "question": "A ticketing platform mapped its `status` field as `text`. Filtering for status \"on hold\" also returns tickets in other statuses, and a status breakdown aggregation produces buckets for the individual words \"on\" and \"hold\". What is the mapping mistake?",
+      "answer": "Exact-value fields like status codes should be `keyword`, which stores the whole value untokenized. `text` runs the value through an analyzer that tokenizes it, which is right for full-text prose but wrong for exact matching and aggregations."
+    },
+    {
+      "id": "elasticsearch-05",
+      "type": "true_false",
+      "concept": "Tokenization of text fields",
+      "question": "When Elasticsearch indexes a `text` field, it stores the entire field value as a single entry in the inverted index.",
+      "answer": "False — the analyzer tokenizes the text into individual terms, and each term becomes its own key in the inverted index pointing to the documents that contain it. That is what makes word-level full-text lookup possible."
+    },
+    {
+      "id": "elasticsearch-06",
+      "type": "scenario",
+      "concept": "Stemming",
+      "question": "A recipe app's search for \"baking\" misses recipes that only contain the words \"baked\" or \"bakes\", so users think content is missing. The documents are indexed with a bare-bones analyzer. What analysis feature fixes this, and how?",
+      "answer": "Stemming: it reduces words to a common root form (bake) at both index and query time, so morphological variants of the same word match each other."
+    },
+    {
+      "id": "elasticsearch-07",
+      "type": "scenario",
+      "concept": "Fuzzy matching via edit distance",
+      "question": "A workplace chat app has a people-search box. Typing \"Jhon Smith\" returns zero results even though John Smith exists, and support tickets about it keep coming in. What capability should the team turn on, and what makes it work?",
+      "answer": "Fuzzy matching: the query tolerates a small edit distance (character insertions, deletions, swaps) between the typed term and indexed terms, so common misspellings still match."
+    },
+    {
+      "id": "elasticsearch-08",
+      "type": "scenario",
+      "concept": "Optimistic concurrency via document versions",
+      "question": "During a flash sale, two backend services both read a product document from Elasticsearch, modify different fields, and write it back with a full PUT. One service's change silently disappears. Without adding locks, how should the writes be made safe?",
+      "answer": "Use optimistic concurrency: send the version the writer read (the document's `_version` / sequence metadata) with the update, so a write against a stale version fails with a conflict instead of clobbering. The loser re-reads and retries."
+    },
+    {
+      "id": "elasticsearch-09",
+      "type": "scenario",
+      "concept": "Partial updates via the _update endpoint",
+      "question": "A logistics app stores shipment documents with 30 fields in Elasticsearch. To change just a shipment's `eta`, the client currently GETs the whole document, edits it in memory, and PUTs it back, occasionally clobbering a concurrent carrier-status change. What API removes the round trip?",
+      "answer": "POST to the document's `_update` endpoint with only the changed fields: Elasticsearch merges the partial change into the latest version of the document server-side, so the client neither fetches the full document nor overwrites concurrent edits to other fields. Internally the document is still reindexed as a new version."
+    },
+    {
+      "id": "elasticsearch-10",
+      "type": "scenario",
+      "concept": "Cost of frequent document updates",
+      "question": "An IoT platform stores a status document per device in Elasticsearch and rewrites each one every two seconds across 500,000 devices. Indexing throughput collapses and disk I/O is constantly saturated. Why is Elasticsearch struggling with this workload?",
+      "answer": "Elasticsearch never updates documents in place — every update soft-deletes the old document and indexes a new one, and the garbage only disappears at segment merge. Constant per-document churn generates enormous merge overhead, so rapidly mutating state is the wrong workload for it."
+    },
+    {
+      "id": "elasticsearch-11",
+      "type": "scenario",
+      "concept": "Bool queries for combining conditions",
+      "question": "A used-car marketplace needs one search where the listing text must match the requested model AND the price must fall under a limit, while listings mentioning \"one owner\" should rank higher without being required. How is this expressed in a single Elasticsearch query?",
+      "answer": "With a `bool` query: put the text match and the price `range` condition in `must` clauses, which every result has to satisfy, and the \"one owner\" match in a `should` clause, which boosts the relevance score when it hits without excluding documents that lack it."
+    },
+    {
+      "id": "elasticsearch-12",
+      "type": "scenario",
+      "concept": "from/size deep pagination penalty",
+      "question": "A BI dashboard lets analysts jump to any page of query results. Requesting page 1,100 with `from=11000, size=10` fails outright, and pages in the hundreds are painfully slow. What is going on?",
+      "answer": "With from/size, every shard must fetch and sort the full `from + size` top documents for each request, so cost grows with depth, and Elasticsearch caps from+size at 10,000 by default. Deep random-access pagination is fundamentally expensive in this model."
+    },
+    {
+      "id": "elasticsearch-13",
+      "type": "scenario",
+      "concept": "search_after pagination",
+      "question": "A marketing platform runs a nightly export that walks through 5 million matching contact documents in sorted order. from/size dies partway through. What pagination approach fits, and what does the client give up?",
+      "answer": "Use `search_after`: sort on a deterministic key (with `_id` as tiebreaker) and pass the last document's sort values to fetch the next page, so each page starts where the previous ended at constant cost. The trade-off is client-held state and no jumping to arbitrary pages."
+    },
+    {
+      "id": "elasticsearch-14",
+      "type": "scenario",
+      "concept": "Point-in-Time consistent pagination",
+      "question": "A job board paginates search results with search_after while new job posts are being indexed continuously. Users report seeing the same job on two consecutive pages and other jobs never appearing at all. What should the team add?",
+      "answer": "Open a Point in Time (PIT) and paginate against it: the PIT pins a consistent snapshot of the index, so live writes can't shift results between pages. Close it when the walk finishes, since keeping the snapshot has overhead."
+    },
+    {
+      "id": "elasticsearch-15",
+      "type": "scenario",
+      "concept": "geo_shape for polygon zones",
+      "question": "A food delivery app stores each restaurant's delivery area, which is an irregular polygon drawn by the restaurant owner. The team mapped it as a `geo_point` and can't answer \"which restaurants deliver to this address\". What is the right mapping?",
+      "answer": "`geo_point` only represents a single lat/lon point; delivery areas are polygons and need `geo_shape`. With geo_shape the query becomes a containment check of the user's location against each restaurant's polygon."
+    },
+    {
+      "id": "elasticsearch-16",
+      "type": "scenario",
+      "concept": "geo_distance radius queries",
+      "question": "An EV-charging app needs \"show chargers within 5 km of the driver\" over a few million charger documents, each with a fixed lat/lon. How should the field be mapped and queried in Elasticsearch?",
+      "answer": "Map the location as `geo_point` and run a `geo_distance` query with the radius and the driver's coordinates. Elasticsearch's spatial index structures (geohash/BKD-based) make the radius lookup efficient."
+    },
+    {
+      "id": "elasticsearch-17",
+      "type": "scenario",
+      "concept": "Script-based sorting",
+      "question": "A marketplace wants search results ordered by each member's personalized price — list price times a per-request discount factor that isn't stored in the document. How can Elasticsearch sort on that, and what's the catch?",
+      "answer": "Use a script-based sort (a Painless script computes the value per document at query time). The catch is cost: scripts run for every candidate document, so it's slower than sorting on an indexed field — precompute the value into the document if this is a hot path."
+    },
+    {
+      "id": "elasticsearch-18",
+      "type": "scenario",
+      "concept": "Nested field type and nested queries",
+      "question": "A vacation-rental site embeds an array of review objects in each listing document. Searching for listings with a review that has rating >= 4 AND mentions \"clean\" returns a listing whose only 5-star review says nothing of the sort — the word \"clean\" appears in a different 1-star review. Why, and what's the fix?",
+      "answer": "Default object mapping flattens arrays, so query conditions can match across different review objects. Map reviews as `nested` and use a `nested` query, which applies all conditions within a single review object."
+    },
+    {
+      "id": "elasticsearch-19",
+      "type": "scenario",
+      "concept": "Relevance scoring with _score",
+      "question": "A news site's search for \"budget referendum\" ranks a short article using the rare word \"referendum\" once above a long article using \"budget\" twenty times. The PM asks if ranking is broken. What is actually determining the order?",
+      "answer": "Nothing is broken — without an explicit sort, Elasticsearch orders by `_score`, a TF-IDF/BM25-style relevance score. Rare terms carry high inverse-document-frequency weight, so a match on \"referendum\" contributes far more than repeats of a common word."
+    },
+    {
+      "id": "elasticsearch-20",
+      "type": "scenario",
+      "concept": "Doc values for sorting and aggregations",
+      "question": "A mobile gaming company disabled doc values on the `score` field to save disk space. Leaderboard queries that sort by score and aggregations like average-score-per-region immediately broke or became unusably slow. Why did that field setting matter so much?",
+      "answer": "Doc values are a columnar, per-field layout of every document's value in a segment, and they're what sorting and aggregations read. The inverted index only answers term-to-document lookups; without doc values ES has no efficient way to get each document's field value."
+    },
+    {
+      "id": "elasticsearch-21",
+      "type": "scenario",
+      "concept": "Shards for horizontal partitioning",
+      "question": "A video platform's metadata index has grown to 4 TB, larger than any single node's storage, and indexing plus query load exceed one machine's capacity. What Elasticsearch mechanism addresses this, and what is each unit under the hood?",
+      "answer": "Split the index into multiple shards, which Elasticsearch distributes across data nodes — that's how both data and load scale horizontally. Each shard is a self-contained Lucene index."
+    },
+    {
+      "id": "elasticsearch-22",
+      "type": "scenario",
+      "concept": "Replicas for throughput and availability",
+      "question": "A social bookmarking site expects a 10x read spike during a press launch; write volume stays flat, and the team also worries about losing a data node mid-launch. What single Elasticsearch knob addresses both concerns?",
+      "answer": "Increase the replica count. Replicas serve reads, so throughput scales roughly with the number of copies (a shard doing X TPS gives ~X*Y TPS with Y copies), and each replica is a redundant copy that survives a node failure."
+    },
+    {
+      "id": "elasticsearch-23",
+      "type": "scenario",
+      "concept": "Master node role",
+      "question": "While sizing a cluster, a fintech team is surprised that vendors recommend small, cheap instances for the dedicated master nodes but big machines for data nodes. Why can master nodes be small?",
+      "answer": "Masters only manage cluster state — node membership, index creation/deletion, shard allocation — and one elected active master does this while other master-eligible nodes stand by. They don't store data or serve queries, so they need little hardware."
+    },
+    {
+      "id": "elasticsearch-24",
+      "type": "scenario",
+      "concept": "Dedicated coordinating nodes",
+      "question": "An analytics SaaS runs huge aggregation queries. Data nodes suffer GC pauses not from searching their own shards but from merging partial results arriving from every other shard. How can the cluster topology fix this?",
+      "answer": "Add dedicated coordinating nodes as the client entry point: they parse and plan the query, scatter it to the relevant shards, and gather/merge the partial results. That offloads the memory-heavy merge work from the data nodes."
+    },
+    {
+      "id": "elasticsearch-25",
+      "type": "scenario",
+      "concept": "Ingest nodes and pipelines",
+      "question": "A security team ships raw firewall logs to Elasticsearch and needs each event enriched before indexing — GeoIP lookup on the source address, timestamp parsing, and noisy fields dropped. They are about to build a standalone preprocessing service. What built-in cluster feature already does this, and where should it run?",
+      "answer": "Ingest pipelines: chains of processors that transform and prepare documents on their way into the index, executed on ingest nodes. Dedicating ingest nodes keeps the transformation work off the data nodes so heavy enrichment doesn't degrade search."
+    },
+    {
+      "id": "elasticsearch-26",
+      "type": "scenario",
+      "concept": "Hot/warm/cold data tiers",
+      "question": "An observability platform retains 180 days of logs in Elasticsearch, but 95% of queries touch the last 7 days. Storing everything on NVMe-backed nodes is blowing the budget. How should the cluster be restructured?",
+      "answer": "Use tiered data nodes: keep recent, hot indices on fast hot-tier hardware and roll aging indices to warm/cold/frozen nodes on progressively cheaper storage. Query likelihood by age is exactly what the tiering model is for."
+    },
+    {
+      "id": "elasticsearch-27",
+      "type": "scenario",
+      "concept": "Immutable segments and append-only writes",
+      "question": "A search engineer instrumenting disk activity notices Elasticsearch never modifies an existing index file — bulk indexing only ever buffers documents and writes brand-new files. Is this an implementation quirk or a deliberate design, and why?",
+      "answer": "Deliberate: documents are batched and flushed as new immutable Lucene segments, never edited in place. Immutability gives fast sequential writes, lock-free concurrent reads, aggressive caching, better compression, and simpler recovery."
+    },
+    {
+      "id": "elasticsearch-28",
+      "type": "scenario",
+      "concept": "Tombstone deletes and delayed space reclamation",
+      "question": "To satisfy a data-deletion request, a fintech app deletes thousands of user documents from Elasticsearch. Queries no longer return them, but disk usage barely moves for days. Compliance asks why. What is happening?",
+      "answer": "Deletes are soft: the segment just records the document IDs as deleted and pretends they don't exist at query time, while the bytes stay on disk. Space is physically reclaimed only when segment merges rewrite the data — force a merge if hard removal is required."
+    },
+    {
+      "id": "elasticsearch-29",
+      "type": "scenario",
+      "concept": "Segment merging",
+      "question": "After a nightly bulk load, a travel-search index accumulates hundreds of small segments and query latency creeps up; hours later the cluster shows heavy background disk I/O and latency recovers on its own. Explain both observations.",
+      "answer": "Every query must consult each segment, so a proliferation of small segments slows search. The background I/O is segment merging: Elasticsearch rewrites many small segments into fewer large ones, purging soft-deleted documents along the way, which restores performance."
+    },
+    {
+      "id": "elasticsearch-30",
+      "type": "scenario",
+      "concept": "Query planner term-order optimization",
+      "question": "An encyclopedia search for \"the meteorite\" returns almost instantly even though \"the\" appears in essentially every document. An engineer expected the intersection of both terms' posting lists to be dominated by the huge \"the\" list. What is the engine doing?",
+      "answer": "The query planner uses term statistics to order execution: it starts from the rarest term (\"meteorite\") so the candidate set is tiny before it checks the common term. Execution order can change query cost by orders of magnitude, which is why the planner, not the query author, picks it."
+    },
+    {
+      "id": "elasticsearch-31",
+      "type": "scenario",
+      "concept": "Near-real-time search and staleness",
+      "question": "On a social app, a user creates a post and immediately searches for it; it doesn't appear for a second or two, and the PM files a bug. Search is backed by Elasticsearch. What should the engineering team tell the PM?",
+      "answer": "It's expected behavior: Elasticsearch is near-real-time — documents become searchable only after the index refreshes, and results are eventually consistent and can be stale. For read-your-own-writes flows, serve the user's own content from the primary datastore, not the search index."
+    },
+    {
+      "id": "elasticsearch-32",
+      "type": "scenario",
+      "concept": "Not a system of record",
+      "question": "A startup wants to simplify its stack by making Elasticsearch the only datastore for orders and payments — \"it stores JSON and queries fast, why add Postgres?\". What's the blunt answer?",
+      "answer": "Don't: Elasticsearch is a search engine first, without the transactional and durability guarantees a system of record needs, and its update model is expensive. Keep an authoritative database and treat Elasticsearch as a derived, rebuildable search index."
+    },
+    {
+      "id": "elasticsearch-33",
+      "type": "scenario",
+      "concept": "CDC synchronization and drift",
+      "question": "An online pharmacy keeps its catalog in Postgres and dual-writes every change to both Postgres and Elasticsearch from application code. Over months, search results increasingly show prices and stock that don't match the database. What should the architecture look like instead?",
+      "answer": "Drop the dual-writes and stream changes from the authoritative store into Elasticsearch via Change Data Capture (or a reliable queue). Dual-writes fail independently, and that sync drift is the classic Elasticsearch bug; CDC gives one ordered source of truth for the index."
+    },
+    {
+      "id": "elasticsearch-34",
+      "type": "scenario",
+      "concept": "Write buffering for write-heavy ingestion",
+      "question": "An adtech platform indexes clickstream events into Elasticsearch for its dashboard. During big campaigns, event volume spikes 20x, ingestion falls behind, and the cluster starts rejecting writes. Without massively overprovisioning, what should the team add?",
+      "answer": "Put a buffer — a queue like Kafka — between producers and Elasticsearch so indexing consumes at a sustainable rate and spikes are absorbed upstream. Elasticsearch is built for read-heavy workloads; write-heavy ingestion needs smoothing in front of it."
+    },
+    {
+      "id": "elasticsearch-35",
+      "type": "scenario",
+      "concept": "Small-dataset threshold",
+      "question": "A 30-person company wants to stand up a three-node Elasticsearch cluster to search its internal wiki of about 20,000 pages that change rarely. Is this justified?",
+      "answer": "No — well under ~100k mostly-static documents, plenty of simpler and faster options exist, starting with the search capability of the database already holding the pages. A dedicated cluster adds ops burden for no real gain at this size."
+    },
+    {
+      "id": "elasticsearch-36",
+      "type": "scenario",
+      "concept": "Denormalization for search",
+      "question": "A ride-hailing company has normalized rider, driver, and trip tables and wants trip search in Elasticsearch to filter by driver name and rider city. The team is looking for Elasticsearch's join feature. What should they do instead?",
+      "answer": "There is no real join — Elasticsearch isn't relational. Denormalize: embed the searchable driver and rider fields into each trip document at index time, accept the duplication, and design for answering a search in one query."
+    },
+    {
+      "id": "elasticsearch-37",
+      "type": "scenario",
+      "concept": "Postgres full-text as an alternative",
+      "question": "In a system design for a helpdesk SaaS, search over articles is a minor feature and the design already includes Postgres. The candidate reflexively adds an Elasticsearch cluster plus a sync pipeline. What would a stronger answer do?",
+      "answer": "Use Postgres's built-in full-text search with a GIN index and skip the extra system entirely — leveraging the existing database shrinks the design's footprint and removes a whole sync problem. Reach for Elasticsearch only when search requirements outgrow that."
+    },
+    {
+      "id": "elasticsearch-38",
+      "type": "true_false",
+      "concept": "Interview depth expectations by seniority",
+      "question": "In a system design interview, describing Elasticsearch as simply \"a search index\" with no further detail is considered adequate at every seniority level.",
+      "answer": "False — that level of detail passes for mid-level candidates, but senior candidates are expected to explain the underlying mechanics, like how inverted indexes work and how the cluster scales."
+    },
+    {
+      "id": "elasticsearch-39",
+      "type": "mcq2",
+      "concept": "Immutability as a general design lesson",
+      "question": "Beyond Elasticsearch specifically, what is the main payoff of building a storage engine on immutable data files?",
+      "options": [
+        "Data that never changes can be cached, compressed, and read concurrently without locks, at the cost of periodic merges and temporary extra storage",
+        "Total disk usage stays lower because no piece of data ever has to be written more than once"
+      ],
+      "answer": "Data that never changes can be cached, compressed, and read concurrently without locks, at the cost of periodic merges and temporary extra storage — immutability actually increases storage temporarily (old versions linger until merge), so its wins are caching, concurrency, compression, and recovery, not disk savings."
+    },
+    {
+      "id": "elasticsearch-40",
+      "type": "mcq2",
+      "concept": "Separating query execution from storage",
+      "question": "Elasticsearch splits query handling (coordinating nodes) from data storage (data nodes). What general design principle does this illustrate?",
+      "options": [
+        "Separating query execution from storage lets each concern be optimized and scaled independently",
+        "Routing all queries through one node type guarantees every query sees a consistent snapshot across shards"
+      ],
+      "answer": "Separating query execution from storage lets each concern be optimized and scaled independently — the split is about specialization and independent scaling, not consistency; results remain eventually consistent regardless."
+    },
+    {
+      "id": "elasticsearch-41",
+      "type": "mcq2",
+      "concept": "Specialized data structures as a design lesson",
+      "question": "Under the hood, Lucene uses skip lists to intersect posting lists and finite state transducers for its term dictionary instead of one general-purpose structure everywhere. What design lesson does this illustrate?",
+      "options": [
+        "A data structure tailored to one specific access pattern can outperform a general-purpose structure by orders of magnitude",
+        "Standardizing every component on a single general-purpose structure like a B-tree keeps a system simpler and just as fast"
+      ],
+      "answer": "A data structure tailored to one specific access pattern can outperform a general-purpose structure by orders of magnitude — Elasticsearch's speed comes from stacking purpose-built structures (inverted index, doc values, skip lists, FSTs), each optimized for exactly one job."
+    }
+  ]
+}

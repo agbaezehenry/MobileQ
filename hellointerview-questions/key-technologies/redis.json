@@ -1,0 +1,342 @@
+{
+  "section": "key-technologies",
+  "subsection": "Redis",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/redis",
+  "concepts": [
+    "Data model: values are rich data structures (hashes, lists, sets, sorted sets, streams, geospatial), not just strings",
+    "Single-threaded sequential execution: one slow command blocks everything",
+    "Performance envelope: ~100k writes/sec per node with microsecond command execution — size Redis by its own numbers",
+    "N+1 reads are survivable on Redis; MGET/pipelining collapses round trips",
+    "Async replication drops acknowledged writes on failover — not a system of record",
+    "Replica reads trade replication-lag staleness for read scaling",
+    "Cluster resharding: MOVED redirects refresh the client-cached slot map; no server-side forwarding",
+    "Cross-slot errors in cluster mode and hash tags for key co-location",
+    "Key structure design is the scaling strategy — there is no query planner or scatter-gather router",
+    "RDB snapshots lose everything since the last snapshot",
+    "AOF default fsync-per-second loses up to ~1s of acknowledged writes",
+    "Durable Redis-compatible alternatives like AWS MemoryDB trade speed for disk-based durability",
+    "TTL handles staleness, not memory pressure — an eviction policy like allkeys-lru must be configured",
+    "Redis LRU is approximate, based on sampling",
+    "Lock acquisition needs NX plus EX so crashed holders self-release",
+    "Safe lock release: random token plus atomic Lua check-and-delete",
+    "Paused clients acting after lock expiry; no fencing tokens — locks are efficiency, not correctness",
+    "Single-primary locks vanish on failover; Redlock acquires a majority of independent nodes",
+    "Database row locks or conditional updates often replace distributed locks",
+    "Leaderboards on sorted sets: ZADD writes and log-time top-N reads",
+    "Trimming sorted sets with ZREMRANGEBYRANK and negative ranks to cap memory",
+    "Fixed-window bug: EXPIRE on every request means the window never resets",
+    "INCR+EXPIRE must be atomic via Lua or crashes leave TTL-less counters",
+    "Fixed-window boundary bursts; sliding window via sorted set of timestamps",
+    "Proximity search with GEOADD and GEOSEARCH",
+    "Geosearch two-pass mechanics: grid-box candidates then exact radius filter",
+    "Streams consumer groups distribute work: XADD, XREADGROUP, acknowledgements, pending-entry recovery",
+    "XCLAIM cannot tell slow from dead workers — processing must be idempotent",
+    "Streams vs Kafka: retention, replay, and multiple independent consumers",
+    "Pub/Sub at-most-once delivery: offline subscribers miss messages forever",
+    "Pub/Sub connections are pooled per node, not per channel",
+    "Classic cluster Pub/Sub broadcasts to all nodes; Redis 7 sharded Pub/Sub scales",
+    "Rolling your own Pub/Sub over Redis lookups is an anti-pattern",
+    "Hot key diagnosis: one key's traffic overwhelms one node regardless of cluster size",
+    "Hot-key mitigation: key copies with random suffixes and their costs",
+    "Hot-key mitigation: client-side near cache with short-TTL staleness trade-off",
+    "Replica limits for hot keys: explicit replica reads required; useless for write-hot keys",
+    "Interview tip: proactively flag hot-key risks and mitigations",
+    "When not to use Redis: working set that cannot economically fit in RAM",
+    "When not to use Redis: no joins or flexible cross-key querying"
+  ],
+  "question_count": 40,
+  "questions": [
+    {
+      "id": "redis-01",
+      "type": "true_false",
+      "concept": "Data model: values are rich data structures (hashes, lists, sets, sorted sets, streams, geospatial), not just strings",
+      "question": "In Redis, every value stored at a key is a plain string; richer structures like rankings, queues, or logs must be assembled client-side by the application.",
+      "answer": "False — Redis is a data structure store: the value at a key can natively be a hash, list, set, sorted set, stream, or geospatial index, each with its own command family. That is precisely what makes leaderboards, queues, and logs one-command operations rather than client-side constructions."
+    },
+    {
+      "id": "redis-02",
+      "type": "scenario",
+      "concept": "Single-threaded sequential execution: one slow command blocks everything",
+      "question": "An e-commerce engineer runs an expensive debugging command that scans every key on the production Redis cache in the middle of the day. Every product-page request stalls for the full duration, even ones touching completely unrelated keys. Why?",
+      "answer": "Redis executes commands sequentially on a single thread, so one long-running command blocks every command queued behind it regardless of which keys they touch. That design removes the need for locks, but it means expensive full-keyspace operations must never run against a busy production instance."
+    },
+    {
+      "id": "redis-03",
+      "type": "scenario",
+      "concept": "Performance envelope: ~100k writes/sec per node with microsecond command execution — size Redis by its own numbers",
+      "question": "A media startup expects a peak of 40,000 vote increments per second during a live TV event and plans a 15-node Redis Cluster because that is what their Postgres capacity math suggested. What does a single Redis node actually absorb, and what does that imply for the plan?",
+      "answer": "A single Redis node handles on the order of 100k writes per second, executing each command in microseconds with sub-millisecond network reads, so 40k increments per second fits on one node with headroom. Size Redis by its own performance envelope, not relational-database math — cluster only when data size or traffic genuinely exceeds one node."
+    },
+    {
+      "id": "redis-04",
+      "type": "scenario",
+      "concept": "N+1 reads are survivable on Redis; MGET/pipelining collapses round trips",
+      "question": "A social app renders a 50-post feed by issuing one Redis GET per post. A code reviewer flags this as a fatal N+1 problem, the same way it would be against a SQL database. Is the reviewer right, and what would you do?",
+      "answer": "Not fatal — Redis commands cost microseconds server-side, so an N+1 pattern that would sink a SQL design is survivable here. Still, collapse the 50 GETs into a single round trip with MGET or pipelining to remove the per-request network overhead."
+    },
+    {
+      "id": "redis-05",
+      "type": "scenario",
+      "concept": "Async replication drops acknowledged writes on failover — not a system of record",
+      "question": "A fintech startup stores customer ledger balances only in Redis, with a replica attached for high availability. During a routine failover the replica is promoted, and several transactions the API had already confirmed to customers are simply gone. What went wrong?",
+      "answer": "Redis replication is asynchronous: the primary acknowledges writes before the replica has copied them, so promoting the replica discards the newest acknowledged writes. Redis must never be the system of record for money — the ledger belongs in a durable database, with Redis in front only as a cache."
+    },
+    {
+      "id": "redis-06",
+      "type": "scenario",
+      "concept": "Replica reads trade replication-lag staleness for read scaling",
+      "question": "An ops dashboard reads metrics from Redis replicas to offload the primary and occasionally shows counts a few hundred milliseconds behind what the primary holds. The team is debating whether this is a bug. What is your read?",
+      "answer": "Expected behavior, not a bug: replication is asynchronous, so replica reads always lag by the replication delay. That bounded staleness is exactly the price of scaling reads onto replicas, and for a metrics dashboard it is a perfectly good trade."
+    },
+    {
+      "id": "redis-07",
+      "type": "scenario",
+      "concept": "Cluster resharding: MOVED redirects refresh the client-cached slot map; no server-side forwarding",
+      "question": "A SaaS analytics dashboard grows its Redis Cluster from 6 to 9 nodes. Immediately afterward, application logs fill with MOVED responses, though every request succeeds on retry. What is happening?",
+      "answer": "Resharding migrated some of the 16,384 hash slots to the new nodes, so clients holding the old slot-to-node map are asking the wrong node. Redis never forwards the request — it replies MOVED with the correct node's address, and the client refreshes its cached map. This is expected, self-healing behavior during a rebalance."
+    },
+    {
+      "id": "redis-08",
+      "type": "scenario",
+      "concept": "Cross-slot errors in cluster mode and hash tags for key co-location",
+      "question": "A mobile game running Redis Cluster stores each player's inventory at player:42:inventory and wallet at player:42:wallet, updating both in one MULTI transaction on every purchase. In production the transaction fails with a cross-slot error even though both keys belong to the same player. What should the team change, and why?",
+      "answer": "Rename the keys with a hash tag — {player:42}:inventory and {player:42}:wallet — so only the text in braces is hashed and both keys land in the same slot on the same node. Cluster mode requires all keys in a multi-key command or transaction to live on one node."
+    },
+    {
+      "id": "redis-09",
+      "type": "scenario",
+      "concept": "Key structure design is the scaling strategy — there is no query planner or scatter-gather router",
+      "question": "A team migrating a multi-tenant app onto Redis Cluster asks where to configure the query planner that will route and spread their lookups across the nodes. What do they need to understand about how Redis scales?",
+      "answer": "There is no query planner or scatter-gather router — the client hashes each key name to a slot and talks directly to the owning node. Your key naming scheme is your distribution and access strategy, so keys must be designed upfront to match the exact lookups the application will make; that is how you scale Redis."
+    },
+    {
+      "id": "redis-10",
+      "type": "scenario",
+      "concept": "RDB snapshots lose everything since the last snapshot",
+      "question": "A note-taking app persists its Redis instance with RDB snapshots taken every five minutes. After a crash, users lose everything written in the last four minutes and the team is surprised. What should they understand about their persistence choice?",
+      "answer": "RDB is periodic snapshotting: a crash loses every write since the last snapshot, which here can be up to five minutes. If they need a tighter loss window they should switch to AOF, which narrows the exposure to about one second of writes — and if even that is unacceptable, Redis is the wrong primary store."
+    },
+    {
+      "id": "redis-11",
+      "type": "scenario",
+      "concept": "AOF default fsync-per-second loses up to ~1s of acknowledged writes",
+      "question": "An IoT platform buffers sensor readings in Redis with AOF persistence enabled and assumes this means zero data loss. After a host crash, roughly the last second of acknowledged writes is missing. Why?",
+      "answer": "AOF logs every write but by default fsyncs to disk only once per second, so a crash loses up to a second of writes Redis already acknowledged. Fsync-on-every-write exists but almost nobody uses it because it destroys the speed that justified Redis in the first place."
+    },
+    {
+      "id": "redis-12",
+      "type": "mcq2",
+      "concept": "Durable Redis-compatible alternatives like AWS MemoryDB trade speed for disk-based durability",
+      "question": "A team loves the Redis API but requires that every acknowledged write survive a node loss. Which managed option is the more appropriate choice?",
+      "options": [
+        "Standard Redis with AOF configured to fsync every second",
+        "A durability-focused Redis-compatible service such as AWS MemoryDB"
+      ],
+      "answer": "A durability-focused Redis-compatible service such as AWS MemoryDB — it gives up a little speed for real disk-based durability of acknowledged writes, whereas AOF with per-second fsync still loses up to a second of acknowledged writes on a crash."
+    },
+    {
+      "id": "redis-13",
+      "type": "scenario",
+      "concept": "TTL handles staleness, not memory pressure — an eviction policy like allkeys-lru must be configured",
+      "question": "An e-commerce site caches product pages in Redis with 10-minute TTLs. Under heavy load Redis begins rejecting writes with out-of-memory errors, even though keys are expiring constantly. What should the team change?",
+      "answer": "Out of the box Redis rejects writes once memory is full — TTLs control staleness, not memory pressure. Configure an eviction policy such as allkeys-lru so Redis discards least-recently-used keys to make room, which is exactly the behavior a cache wants."
+    },
+    {
+      "id": "redis-14",
+      "type": "true_false",
+      "concept": "Redis LRU is approximate, based on sampling",
+      "question": "When configured with allkeys-lru, Redis tracks the exact recency order of every key and always evicts the strictly least-recently-used one.",
+      "answer": "False — Redis approximates LRU by sampling a handful of candidate keys and evicting the best candidate, trading precision for speed. For caching workloads the approximation is entirely sufficient."
+    },
+    {
+      "id": "redis-15",
+      "type": "scenario",
+      "concept": "Lock acquisition needs NX plus EX so crashed holders self-release",
+      "question": "A ride-hailing dispatcher uses Redis keys as zone locks, acquired with a bare SETNX and no expiry. A worker crashes while holding a zone's lock, and dispatch for that zone freezes indefinitely until someone manually deletes the key. What was missing from the design?",
+      "answer": "An expiry. Locks should be acquired with SET key token NX EX <seconds> so that if the holder crashes, the lock self-expires and another worker can take over instead of deadlocking the zone forever."
+    },
+    {
+      "id": "redis-16",
+      "type": "scenario",
+      "concept": "Safe lock release: random token plus atomic Lua check-and-delete",
+      "question": "A ticketing site guards seat holds with Redis locks. A worker's task overran its lock TTL, so a second worker acquired the lock; when the first worker finally finished, it ran DEL on the lock key, and a third worker instantly grabbed the same seat. How should lock release work to prevent this?",
+      "answer": "Store a random unique token as the lock's value and release with a Lua script that deletes the key only if the stored token matches yours. Because Lua runs atomically on the single thread, this check-and-delete can never free a lock that now belongs to another worker."
+    },
+    {
+      "id": "redis-17",
+      "type": "scenario",
+      "concept": "Paused clients acting after lock expiry; no fencing tokens — locks are efficiency, not correctness",
+      "question": "A payments service holds a 30-second Redis lock while reconciling an account. One process hits a long GC pause, its lock expires, a second process starts reconciling, and then the first process wakes up and writes anyway, corrupting the account. The team asks how to make the Redis lock airtight. What do you tell them?",
+      "answer": "You cannot from Redis alone — a paused or slow client can always act after its lock has expired, and Redis has no built-in fencing tokens (monotonically increasing grant numbers the storage layer checks) to reject the stale writer. Enforce the invariant where the data lives or use a consensus system, and treat Redis locks as an efficiency optimization, not a correctness guarantee."
+    },
+    {
+      "id": "redis-18",
+      "type": "scenario",
+      "concept": "Single-primary locks vanish on failover; Redlock acquires a majority of independent nodes",
+      "question": "A booking service acquires a Redis lock on a single primary; milliseconds later that primary dies and its replica is promoted, after which a second client is granted the very same lock and both clients proceed. Why did the lock protocol fail, and what does Redlock do differently?",
+      "answer": "Replication is asynchronous, so the promoted replica had never heard of the lock and granted it again. Redlock counters this by acquiring the lock on a majority of independent Redis nodes so no single node failure forgets it — though it remains controversial, since a paused client can still act after expiry without fencing tokens."
+    },
+    {
+      "id": "redis-19",
+      "type": "mcq2",
+      "concept": "Database row locks or conditional updates often replace distributed locks",
+      "question": "Two app servers must never concurrently update the same order row in the team's Postgres database. Which approach fits better?",
+      "options": [
+        "Acquire a Redis distributed lock around the update",
+        "Use the database's own row lock (SELECT ... FOR UPDATE) or a conditional UPDATE ... WHERE version = X"
+      ],
+      "answer": "Use the database's own row lock (SELECT ... FOR UPDATE) or a conditional UPDATE ... WHERE version = X — the invariant lives in the database, which can enforce it transactionally with no extra infrastructure and none of the lock-expiry hazards a Redis lock introduces."
+    },
+    {
+      "id": "redis-20",
+      "type": "scenario",
+      "concept": "Leaderboards on sorted sets: ZADD writes and log-time top-N reads",
+      "question": "A gaming studio's SQL-backed leaderboard is buckling: score updates arrive far faster than the database can absorb them, and top-100 queries are slow. What Redis-based design fixes this, and why does it fit?",
+      "answer": "A sorted set: ZADD writes or re-scores a player in logarithmic time, and top-N reads are cheap rank-range queries served in microseconds. A single Redis node absorbs on the order of 100k writes per second, which is exactly the write-heavy ranked workload SQL indexes struggle with."
+    },
+    {
+      "id": "redis-21",
+      "type": "scenario",
+      "concept": "Trimming sorted sets with ZREMRANGEBYRANK and negative ranks to cap memory",
+      "question": "A social platform keeps a per-hashtag sorted set of post scores that grows without bound, and memory usage keeps climbing — yet the product only ever displays each hashtag's top 10 posts. What is the standard fix?",
+      "answer": "Trim after writes with ZREMRANGEBYRANK using negative rank indexes (for example, removing ranks 0 through -11) so each set retains only its top entries. Since negative indexes count down from the highest rank, this deletes the low-scoring tail and keeps memory bounded."
+    },
+    {
+      "id": "redis-22",
+      "type": "scenario",
+      "concept": "Fixed-window bug: EXPIRE on every request means the window never resets",
+      "question": "A developer-tools API enforces 1,000 requests per hour by INCRing a per-client counter and calling EXPIRE 3600 on every single request. Heavy users complain their quota never resets as long as they keep making calls. What is going wrong?",
+      "answer": "Refreshing EXPIRE on every request pushes the reset time forward each call, so under steady traffic the key never expires and the counter never resets. The expiry must be set only when INCR returns 1 — the first request of a fresh window — so the window boundary stays fixed."
+    },
+    {
+      "id": "redis-23",
+      "type": "scenario",
+      "concept": "INCR+EXPIRE must be atomic via Lua or crashes leave TTL-less counters",
+      "question": "A SaaS rate limiter issues INCR and then a separate EXPIRE command from the application. After a crash between the two calls, some counter keys now exist with no TTL at all and permanently block those users. What is the fix?",
+      "answer": "Make the two steps atomic by bundling INCR and EXPIRE in one Lua script — Redis's single thread executes the script as an indivisible unit, so no crash between the two commands can leave a counter without its expiry."
+    },
+    {
+      "id": "redis-24",
+      "type": "scenario",
+      "concept": "Fixed-window boundary bursts; sliding window via sorted set of timestamps",
+      "question": "A fintech API caps each client at 100 requests per minute using per-minute counter keys, yet monitoring shows nearly 200 requests slipping through within a few seconds straddling each minute mark. What is going on, and what design closes the gap?",
+      "answer": "Classic fixed-window boundary effect: a client can spend its full quota at the end of one window and again at the start of the next, doubling the burst rate. Switch to a sliding window — a per-client sorted set of request timestamps, with ZREMRANGEBYSCORE to drop old entries, ZCARD to count, and ZADD to record, run together as one atomic Lua script."
+    },
+    {
+      "id": "redis-25",
+      "type": "scenario",
+      "concept": "Proximity search with GEOADD and GEOSEARCH",
+      "question": "A food-delivery app needs to find every courier within 2 km of a restaurant, with courier positions refreshing every few seconds. Which Redis capability serves this, and how is it used?",
+      "answer": "Redis geospatial commands: GEOADD records each courier's longitude and latitude, and GEOSEARCH with FROMLONLAT and BYRADIUS returns everyone within 2 km. Both updates and radius queries are cheap enough to keep pace with positions refreshing every few seconds."
+    },
+    {
+      "id": "redis-26",
+      "type": "true_false",
+      "concept": "Geosearch two-pass mechanics: grid-box candidates then exact radius filter",
+      "question": "Redis GEOSEARCH answers a radius query in two passes: it first collects candidate members from grid-aligned geohash boxes in the underlying sorted set, then filters those candidates down to the exact radius.",
+      "answer": "True — Redis stores positions as geohashes in a sorted set, and because geohash boxes are grid-aligned squares that only approximate a circle, it gathers candidates from the bounding boxes and then distance-filters them, giving O(N + log M) complexity where N is the candidates in the boxes and M the true matches."
+    },
+    {
+      "id": "redis-27",
+      "type": "scenario",
+      "concept": "Streams consumer groups distribute work: XADD, XREADGROUP, acknowledgements, pending-entry recovery",
+      "question": "A video platform needs to farm transcoding jobs out to a fleet of workers so that each job is handled by exactly one worker, and jobs held by a crashed worker are not lost. Which Redis feature fits, and what are its moving parts?",
+      "answer": "Redis Streams with a consumer group: producers XADD jobs to the append-only stream, workers XREADGROUP so each entry is delivered to only one consumer in the group, and workers acknowledge entries on completion. Unacknowledged entries remain tracked in the pending list, from which another worker can XCLAIM them if the original holder dies."
+    },
+    {
+      "id": "redis-28",
+      "type": "scenario",
+      "concept": "XCLAIM cannot tell slow from dead workers — processing must be idempotent",
+      "question": "A notifications service processes a Redis stream with a consumer group. One worker occasionally stalls on a slow downstream call, and afterward users report receiving the same push notification twice. Explain the duplication and the required design response.",
+      "answer": "While the worker stalled, its pending entry's idle time grew until another worker XCLAIMed and reprocessed it — then the original worker also completed. Redis fundamentally cannot distinguish a slow worker from a dead one, so occasional double-processing is inevitable and every handler must be idempotent (for example, deduplicating on a notification ID before sending)."
+    },
+    {
+      "id": "redis-29",
+      "type": "scenario",
+      "concept": "Streams vs Kafka: retention, replay, and multiple independent consumers",
+      "question": "An analytics company ingests clickstream events consumed by three independent teams — one in real time, one in nightly batches, and one backfilling ML models over the previous 30 days. They are choosing between Redis Streams and Kafka. Which fits better here, and why?",
+      "answer": "Kafka — this workload needs long retention, durable ordered storage, and independent replay by multiple consumers, which is exactly Kafka's job. Redis Stream entries are only as durable as Redis's persistence settings and fit modest queues and background-job distribution, not month-long replayable logs."
+    },
+    {
+      "id": "redis-30",
+      "type": "scenario",
+      "concept": "Pub/Sub at-most-once delivery: offline subscribers miss messages forever",
+      "question": "A chat app delivers messages through Redis Pub/Sub. Users on flaky mobile connections complain that messages sent during a brief disconnect never arrive, even after they reconnect. Why, and what is the fix?",
+      "answer": "Redis Pub/Sub is at-most-once with zero persistence: a subscriber offline at publish time misses the message permanently. Back the live Pub/Sub path with durable storage — Redis Streams or a message broker — so reconnecting clients can catch up on what they missed."
+    },
+    {
+      "id": "redis-31",
+      "type": "true_false",
+      "concept": "Pub/Sub connections are pooled per node, not per channel",
+      "question": "A Redis Pub/Sub deployment with millions of channels requires millions of client connections, since each subscribed channel needs its own connection.",
+      "answer": "False — connections are pooled per node, not per channel: one connection multiplexes subscriptions to many channels, and channels themselves are free (they exist merely by being named and vanish when the last subscriber leaves). Millions of channels do not imply millions of connections."
+    },
+    {
+      "id": "redis-32",
+      "type": "scenario",
+      "concept": "Classic cluster Pub/Sub broadcasts to all nodes; Redis 7 sharded Pub/Sub scales",
+      "question": "A live-sports platform runs Pub/Sub on a classic Redis Cluster and keeps adding nodes to raise message throughput, but capacity never improves. Why not, and what changed in Redis 7?",
+      "answer": "Classic cluster Pub/Sub broadcasts every published message to every node, so adding nodes adds broadcast work instead of capacity. Redis 7's sharded Pub/Sub (SPUBLISH/SSUBSCRIBE) routes each channel to the one node owning its slot, so throughput finally scales with cluster size."
+    },
+    {
+      "id": "redis-33",
+      "type": "scenario",
+      "concept": "Rolling your own Pub/Sub over Redis lookups is an anti-pattern",
+      "question": "A chat startup worries Redis Pub/Sub won't scale, so they plan to store each channel's subscriber server addresses in Redis keys, look them up on every publish, and open connections to push messages to those servers directly. Evaluate this plan.",
+      "answer": "It is an anti-pattern that rebuilds Pub/Sub badly: it adds an extra network hop and fresh TCP connections per publish where native Pub/Sub holds persistent per-node pooled connections, and it needs heartbeat/TTL bookkeeping to track which servers are still alive, which Pub/Sub's automatic channel cleanup gives for free. If the use case looks like Pub/Sub, use Pub/Sub."
+    },
+    {
+      "id": "redis-34",
+      "type": "scenario",
+      "concept": "Hot key diagnosis: one key's traffic overwhelms one node regardless of cluster size",
+      "question": "During a flash sale, exactly one node of a retailer's 100-node Redis cluster pegs its CPU and starts timing out while the other 99 nodes sit nearly idle. Total traffic is well within the cluster's aggregate capacity. What is the diagnosis?",
+      "answer": "A hot key: the sale item's key hashes to a single slot owned by that one node, which is absorbing traffic comparable to the rest of the cluster combined. Aggregate cluster capacity is irrelevant — a single key's load always lands on one node unless you deliberately spread it."
+    },
+    {
+      "id": "redis-35",
+      "type": "scenario",
+      "concept": "Hot-key mitigation: key copies with random suffixes and their costs",
+      "question": "To relieve a read-hot product key, a retailer writes identical data to product:9:1 through product:9:10 and has readers pick a random suffix. What does this buy them, and what does it cost?",
+      "answer": "The ten suffixed keys hash to different slots on different nodes, so read load spreads roughly tenfold across the cluster. The costs: every write must fan out to all ten copies, and clients must know which keys are duplicated — either designated upfront or detected at runtime — which is real operational complexity."
+    },
+    {
+      "id": "redis-36",
+      "type": "scenario",
+      "concept": "Hot-key mitigation: client-side near cache with short-TTL staleness trade-off",
+      "question": "A social network sees one viral post's metadata key dominating Redis traffic. An engineer proposes a tiny in-process cache on each app server holding just that key with a 2-second TTL. What is the trade-off of this mitigation?",
+      "answer": "The near cache absorbs most reads before they ever reach Redis, killing the hot spot, but every server may now serve data up to 2 seconds stale. That is acceptable precisely because the TTL is short and the cached key set is narrow — with long TTLs or broad key sets the staleness would become a correctness problem."
+    },
+    {
+      "id": "redis-37",
+      "type": "scenario",
+      "concept": "Replica limits for hot keys: explicit replica reads required; useless for write-hot keys",
+      "question": "A news site adds read replicas to relieve a hot article-counter key, but the primary owning that slot stays just as overloaded. Why might the replicas not be helping?",
+      "answer": "Two reasons: cluster clients read from primaries by default, so replicas absorb nothing unless clients are explicitly configured for replica reads; and if the key is hot because of writes (it is a counter being incremented), replicas cannot help at all — every write still lands on the one primary that owns the slot."
+    },
+    {
+      "id": "redis-38",
+      "type": "mcq2",
+      "concept": "Interview tip: proactively flag hot-key risks and mitigations",
+      "question": "In a system design interview you have just routed a popular item's reads through Redis. Regarding hot keys, which behavior scores better with the interviewer?",
+      "options": [
+        "Proactively point out which keys could become hot and sketch the mitigation upfront",
+        "Keep the design simple and address hot keys only if the interviewer raises the concern"
+      ],
+      "answer": "Proactively point out which keys could become hot and sketch the mitigation upfront — spotting the hot-key failure mode unprompted and designing around it is a strong positive signal, while waiting to be asked reads as not knowing the failure mode exists."
+    },
+    {
+      "id": "redis-39",
+      "type": "scenario",
+      "concept": "When not to use Redis: working set that cannot economically fit in RAM",
+      "question": "A media company wants to load its 40 TB video-metadata archive — most of it rarely accessed — entirely into Redis 'for speed'. What is wrong with this plan?",
+      "answer": "Redis keeps everything in RAM, the most expensive place to store data, and its speed comes entirely from that fact — 40 TB of mostly-cold data in memory is economically absurd. Keep the archive in a disk-backed database or object store and cache only the hot working set in Redis."
+    },
+    {
+      "id": "redis-40",
+      "type": "scenario",
+      "concept": "When not to use Redis: no joins or flexible cross-key querying",
+      "question": "A B2B SaaS team stores customer records as Redis hashes and now needs ad-hoc reports that join customers to invoices with filters across several fields. They ask how to express these queries in Redis. What do you advise?",
+      "answer": "Don't — Redis has no joins and no flexible cross-key querying, and in cluster mode multi-key operations are restricted to a single slot anyway. Relational, ad-hoc query workloads belong in a real database; keep Redis for the fast, targeted key lookups it is built for."
+    }
+  ]
+}

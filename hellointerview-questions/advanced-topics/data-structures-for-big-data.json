@@ -1,0 +1,298 @@
+{
+  "section": "advanced-topics",
+  "subsection": "Data Structures for Big Data",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/data-structures-for-big-data",
+  "concepts": [
+    "When specialized big-data structures are warranted: trading exactness for sublinear memory",
+    "Over-engineering red flag: probabilistic structure where an exact hash table suffices",
+    "Interview prep priority: fundamentals before specialized structures",
+    "Bloom filter query mechanics: membership requires ALL k bits set",
+    "Bloom filter guarantee asymmetry: false positives possible, false negatives impossible",
+    "Bloom filter sizing rule of thumb: ~10 bits per element for ~1% FPR",
+    "Bloom filter saturation: FPR degrades past design capacity, no in-place growth",
+    "Bloom filter deletion limitation: shared bits, counting variant",
+    "Bloom filter use case: web-crawl dedup where false positives are acceptable",
+    "Bloom filter use case: one-hit-wonder cache admission (cache on second request)",
+    "Bloom filter use case: skipping pointless storage reads in LSM engines",
+    "Count-min sketch query mechanics: take the minimum across rows",
+    "Count-min sketch one-sided error: never underestimates",
+    "Count-min sketch tuning: width controls error magnitude, depth controls error probability",
+    "Count-min sketch cannot enumerate keys: pair with a heap for top-K",
+    "Count-min sketch pitfall: absolute error swamps long-tail items",
+    "Count-min sketch use case: frequency-based cache admission (TinyLFU-style)",
+    "HyperLogLog purpose: distinct counts without storing the set",
+    "HyperLogLog intuition: rare leading-zero patterns imply high cardinality",
+    "HyperLogLog variance reduction: registers plus harmonic mean",
+    "HyperLogLog memory is fixed regardless of cardinality",
+    "HyperLogLog mergeability: lossless union via per-register max",
+    "HyperLogLog pitfall: approximate counts unacceptable for billing",
+    "HyperLogLog security use case: distinct-source cardinality spikes",
+    "HyperLogLog cache sizing use case: working-set estimation",
+    "Approximate quantiles purpose: exact percentiles require storing all samples",
+    "Fixed-width buckets weakness: wasted resolution on skewed distributions",
+    "Exponential buckets: constant relative error across orders of magnitude",
+    "Dynamic histograms: bucket boundaries adapt to observed data",
+    "Percentiles cannot be averaged across servers: merge histograms instead",
+    "SLO monitoring: percentile-defined objectives require percentile tracking",
+    "A/B testing: compare distributions and tails, not just means",
+    "Autoscaling: tail latency leads mean latency as a saturation signal",
+    "Load balancing on tail latency: per-backend histograms expose degraded instances that averages hide",
+    "Interview narrative: exact solution first, then justify the sketch",
+    "Matching the structure to the question: membership vs frequency vs cardinality vs quantiles"
+  ],
+  "question_count": 36,
+  "questions": [
+    {
+      "id": "data-structures-for-big-data-01",
+      "type": "scenario",
+      "concept": "When specialized big-data structures are warranted: trading exactness for sublinear memory",
+      "question": "A photo-sharing app must avoid re-showing any of its 10 billion posts to users who already saw them. Each of 400 million users has a 'seen set' of post IDs in Redis, and memory costs are exploding. An engineer proposes simply adding more Redis shards. What class of solution should the team consider instead, and what do they give up?",
+      "answer": "Replace each exact seen-set with a probabilistic structure like a per-user Bloom filter, which shrinks memory by orders of magnitude. The cost is a small, tunable error rate — occasionally a never-seen post is wrongly treated as seen. Sharding just spreads the same enormous footprint across more machines without shrinking it."
+    },
+    {
+      "id": "data-structures-for-big-data-02",
+      "type": "scenario",
+      "concept": "Over-engineering red flag: probabilistic structure where an exact hash table suffices",
+      "question": "In a mock system design interview for a URL shortener expected to hold about 100,000 links, the candidate proposes a Bloom filter to check whether a short code is already taken. The interviewer frowns. Why does this proposal hurt the candidate?",
+      "answer": "At 100k entries, an exact hash table or a unique database index is trivially small and gives exact answers. Reaching for a probabilistic structure when a plain lookup suffices signals over-engineering and poor judgment about scale — exactly the red flag interviewers watch for."
+    },
+    {
+      "id": "data-structures-for-big-data-03",
+      "type": "true_false",
+      "concept": "Interview prep priority: fundamentals before specialized structures",
+      "question": "For most system design interview candidates, studying probabilistic data structures like Bloom filters and HyperLogLog should come before mastering caching, load balancing, and partitioning.",
+      "answer": "False — the fundamentals (caching, load balancing, partitioning) appear in nearly every interview and give far higher return; specialized structures are an advanced layer that only helps once the core is solid."
+    },
+    {
+      "id": "data-structures-for-big-data-04",
+      "type": "scenario",
+      "concept": "Bloom filter query mechanics: membership requires ALL k bits set",
+      "question": "An email marketing platform built a Bloom filter over its suppression list using 7 hash functions. A junior engineer wrote the lookup to report 'suppressed' if ANY of the 7 computed bit positions is set. Soon nearly every send is being blocked. What is the bug?",
+      "answer": "A Bloom filter membership test must require ALL k bits to be set; if even one is 0 the element is definitely absent. Testing 'any bit set' turns almost every query into a hit once the array has a moderate number of 1s, exploding the false positive rate."
+    },
+    {
+      "id": "data-structures-for-big-data-05",
+      "type": "scenario",
+      "concept": "Bloom filter guarantee asymmetry: false positives possible, false negatives impossible",
+      "question": "A ticketing company loads a Bloom filter of already-redeemed ticket codes onto offline gate scanners. Occasionally a valid, never-scanned ticket is rejected at the gate. The fraud team asks: can the reverse happen — a truly redeemed ticket sailing through as unused?",
+      "answer": "Not for any code that was actually in the filter: Bloom filters have no false negatives, so every inserted (redeemed) code will always be flagged. The rejections of valid tickets are false positives — the one-sided error Bloom filters accept in exchange for tiny memory."
+    },
+    {
+      "id": "data-structures-for-big-data-06",
+      "type": "scenario",
+      "concept": "Bloom filter sizing rule of thumb: ~10 bits per element for ~1% FPR",
+      "question": "A news aggregator deduplicates 1 billion article URLs with a Bloom filter and needs roughly a 1% false positive rate. To save memory, an engineer allocates a 1-billion-bit array — one bit per URL. Will this hit the target, and what allocation is actually needed?",
+      "answer": "No — at 1 bit per element the array becomes almost entirely 1s and the false positive rate approaches useless levels. A ~1% FPR needs on the order of 10 bits per element with around 7 hash functions, so roughly 10 billion bits (~1.25 GB), which is still tiny versus storing a billion URLs."
+    },
+    {
+      "id": "data-structures-for-big-data-07",
+      "type": "scenario",
+      "concept": "Bloom filter saturation: FPR degrades past design capacity, no in-place growth",
+      "question": "A fintech risk team sized a Bloom filter for 100 million device fingerprints. Two years later it has absorbed 800 million, and the 'device seen before' check now fires for nearly every brand-new device. What happened, and what is the fix?",
+      "answer": "The filter is saturated: far past its design capacity, most bits are set, so almost any query looks like a hit. Bloom filters cannot grow in place — the team must rebuild a larger filter sized for current volume (or adopt a scalable/layered filter scheme that adds capacity in tiers)."
+    },
+    {
+      "id": "data-structures-for-big-data-08",
+      "type": "scenario",
+      "concept": "Bloom filter deletion limitation: shared bits, counting variant",
+      "question": "A chat app keeps a Bloom filter of usernames each user has blocked. When someone unblocks a user, the code zeroes out the bits that username hashed to. Users now report that other, unrelated people they blocked can suddenly message them. Why, and what should the team use instead?",
+      "answer": "Bits in a Bloom filter are shared across elements, so clearing one element's bits silently deletes others and creates false negatives. Standard Bloom filters do not support deletion — use a counting Bloom filter (increment/decrement small counters) or periodically rebuild the filter from the source of truth."
+    },
+    {
+      "id": "data-structures-for-big-data-09",
+      "type": "scenario",
+      "concept": "Bloom filter use case: web-crawl dedup where false positives are acceptable",
+      "question": "A startup's web crawler tracks visited URLs to avoid refetching. Storing every URL in a database set is dominating storage, but the team hesitates to use a Bloom filter because 'we might skip a page we never actually crawled.' Is that trade acceptable here, and why?",
+      "answer": "Yes. A ~1% false positive rate means skipping a tiny fraction of never-crawled pages, which is a negligible, recoverable loss at web scale, while memory drops from full URL strings to a few bits per URL. Crucially there are no false negatives, so the crawler never wastes work refetching a page it already has."
+    },
+    {
+      "id": "data-structures-for-big-data-10",
+      "type": "scenario",
+      "concept": "Bloom filter use case: one-hit-wonder cache admission (cache on second request)",
+      "question": "A CDN operator finds that about half the objects in its edge caches were requested exactly once and never again, and these one-off objects keep evicting genuinely popular content. What admission technique should they adopt, and how does a Bloom filter enable it?",
+      "answer": "Cache only on the second request: record every requested URL in a Bloom filter, and admit an object to the cache only if the filter already contains it (proving a prior request). One-hit wonders never get cached, so eviction pressure on hot content drops dramatically at the cost of a few filter bits per URL."
+    },
+    {
+      "id": "data-structures-for-big-data-11",
+      "type": "scenario",
+      "concept": "Bloom filter use case: skipping pointless storage reads in LSM engines",
+      "question": "An IoT time-series database stores data in immutable sorted files on disk (LSM-style). Point lookups for keys that do not exist are painfully slow because every file must be checked. How do production LSM engines make these negative lookups cheap?",
+      "answer": "Each on-disk file carries a small in-memory Bloom filter of its keys; a lookup consults the filter first and skips any file that reports 'definitely not present.' Only the false-positive fraction of lookups incurs a wasted disk read, turning most misses into pure memory operations."
+    },
+    {
+      "id": "data-structures-for-big-data-12",
+      "type": "scenario",
+      "concept": "Count-min sketch query mechanics: take the minimum across rows",
+      "question": "An ad-tech pipeline tracks impression counts per campaign in a count-min sketch with 5 hash rows. When reading a count, an engineer takes the MAXIMUM of the 5 counters 'to be safe,' and the reported numbers run wildly high. What should the read do instead, and why?",
+      "answer": "Read the MINIMUM across the rows — that is the 'min' in count-min. Every counter can only be inflated by hash collisions, never deflated, so the smallest of the d counters is the tightest estimate; taking the max deliberately picks the most collision-polluted value."
+    },
+    {
+      "id": "data-structures-for-big-data-13",
+      "type": "scenario",
+      "concept": "Count-min sketch one-sided error: never underestimates",
+      "question": "A music streaming service uses a count-min sketch of play counts to trigger royalty payouts once a track passes 10,000 plays. Legal asks: could an artist whose track genuinely crossed 10,000 plays ever be missed by this check?",
+      "answer": "No — count-min sketch error is strictly one-sided: collisions only add to counters, so a true count is never underestimated and every genuine threshold-crosser will register as crossed. The actual risk runs the other way: some tracks below 10,000 may appear over it and trigger early payouts."
+    },
+    {
+      "id": "data-structures-for-big-data-14",
+      "type": "scenario",
+      "concept": "Count-min sketch tuning: width controls error magnitude, depth controls error probability",
+      "question": "A mobile game store estimates item purchase frequencies with a count-min sketch and finds every estimate biased noticeably high. The team doubles the number of hash rows (depth), but the inflation barely changes. Which dimension should they have grown, and what does each dimension actually control?",
+      "answer": "They should widen the sketch: the expected overestimate scales with total stream volume divided by the width, so more columns means fewer collisions per counter. Depth only shrinks the probability of getting an unusually bad estimate — it cannot reduce the systematic collision bias that width controls."
+    },
+    {
+      "id": "data-structures-for-big-data-15",
+      "type": "scenario",
+      "concept": "Count-min sketch cannot enumerate keys: pair with a heap for top-K",
+      "question": "A social platform wants a live 'top 10 trending hashtags' widget and has a count-min sketch over the hashtag stream. An engineer discovers there is no way to ask the sketch 'which hashtags are biggest.' What is missing from the design?",
+      "answer": "A count-min sketch only answers point queries for keys you already name — it cannot enumerate its contents. The standard pattern pairs it with a small min-heap: as each hashtag streams in, query its estimated count and update the heap of the current top-K candidates, so the heap holds the answer at all times."
+    },
+    {
+      "id": "data-structures-for-big-data-16",
+      "type": "scenario",
+      "concept": "Count-min sketch pitfall: absolute error swamps long-tail items",
+      "question": "An e-commerce team reuses its count-min sketch of product views to build a report covering every product, including obscure ones viewed a handful of times. The rare products show absurdly inflated counts relative to reality. Why is the sketch trustworthy for bestsellers but not for these items?",
+      "answer": "The sketch's error is an absolute amount proportional to total stream size, not relative to each item's count. That noise floor is negligible against a bestseller's millions of views but can dwarf a true count of five, so count-min sketches are only reliable for heavy hitters — never for the long tail."
+    },
+    {
+      "id": "data-structures-for-big-data-17",
+      "type": "scenario",
+      "concept": "Count-min sketch use case: frequency-based cache admission (TinyLFU-style)",
+      "question": "A SaaS platform's in-memory cache must decide, on every eviction, whether the incoming key is likely more valuable than the victim it would displace — but keeping an exact access counter for every key in the huge keyspace is off the table. What compact design solves this?",
+      "answer": "Keep a count-min sketch of recent access frequencies over the whole request stream (the TinyLFU approach). On admission, compare the sketch's frequency estimate for the incoming key against the victim's and only admit if the newcomer is likelier to be popular — near-LFU quality decisions with a few megabytes of counters."
+    },
+    {
+      "id": "data-structures-for-big-data-18",
+      "type": "scenario",
+      "concept": "HyperLogLog purpose: distinct counts without storing the set",
+      "question": "A web analytics SaaS shows 'unique visitors today' for each of its customers' 50 million pages. Storing a set of visitor IDs per page to dedupe repeat views is consuming terabytes. What structure fits, and what does the memory-accuracy trade look like?",
+      "answer": "A HyperLogLog per page: each one occupies a fixed few kilobytes yet estimates distinct visitors within roughly 1-2% error even into the billions. The trade is exactness for a fixed tiny footprint — perfect for dashboard counts where 2% error is invisible."
+    },
+    {
+      "id": "data-structures-for-big-data-19",
+      "type": "scenario",
+      "concept": "HyperLogLog intuition: rare leading-zero patterns imply high cardinality",
+      "question": "A data engineer at a video platform is skeptical: 'How can a 12KB structure count a billion unique viewers? It can't possibly remember who it saw.' What is the core statistical intuition that makes this work?",
+      "answer": "It doesn't remember anyone — it hashes each ID to a uniform random value and tracks the rarest bit pattern observed, like the longest run of leading zeros. Seeing n leading zeros is a 1-in-2^n event, so the rarest pattern witnessed implies roughly how many distinct values must have been hashed."
+    },
+    {
+      "id": "data-structures-for-big-data-20",
+      "type": "scenario",
+      "concept": "HyperLogLog variance reduction: registers plus harmonic mean",
+      "question": "An engineer implements a naive cardinality counter that tracks only the single maximum leading-zero run over the whole stream. The estimates swing wildly — one dataset reads 4x too high after a single 'lucky' hash. How does HyperLogLog fix this instability?",
+      "answer": "One lucky hash dominates a single-register estimate. HyperLogLog splits the stream into many registers (using a hash prefix to pick the register) and combines their observations with a harmonic mean, which suppresses outlier registers — averaging thousands of independent estimates drives the error down to a percent or two."
+    },
+    {
+      "id": "data-structures-for-big-data-21",
+      "type": "true_false",
+      "concept": "HyperLogLog memory is fixed regardless of cardinality",
+      "question": "A HyperLogLog's memory footprint grows in proportion to the number of distinct elements it has counted.",
+      "answer": "False — the register array is fixed-size regardless of cardinality; Redis's implementation uses about 12KB to count billions of distinct items with under 1% standard error."
+    },
+    {
+      "id": "data-structures-for-big-data-22",
+      "type": "scenario",
+      "concept": "HyperLogLog mergeability: lossless union via per-register max",
+      "question": "A ride-hailing app counts unique riders per city. Requests land on 40 API servers, so the team funnels every ride event through a queue to one central HyperLogLog — and the queue is now a bottleneck. How should they restructure the counting, and what property of HLL makes it safe?",
+      "answer": "Each server keeps its own local HLL and periodically ships it for merging. HLL union is lossless: taking the per-register maximum of two sketches yields exactly the sketch you'd get from one stream, so the same rider hitting different servers is still counted once. The central chokepoint disappears entirely."
+    },
+    {
+      "id": "data-structures-for-big-data-23",
+      "type": "scenario",
+      "concept": "HyperLogLog pitfall: approximate counts unacceptable for billing",
+      "question": "An API platform bills customers by the number of unique devices their campaigns reached, computed with HyperLogLog. A large customer audits their invoice and finds the count off by about 1.5%. Was HLL the right tool here?",
+      "answer": "No. HLL's built-in 1-2% error is fine for dashboards but indefensible when money changes hands — invoices must be exact and auditable. Billable metrics need exact counting (e.g., deduplicated records in a database), with HLL reserved for the analytics views."
+    },
+    {
+      "id": "data-structures-for-big-data-24",
+      "type": "scenario",
+      "concept": "HyperLogLog security use case: distinct-source cardinality spikes",
+      "question": "A fintech's login API is being credential-stuffed from botnets. The security team wants an alert whenever an endpoint is hit by an abnormally high number of DISTINCT IP addresses within 5 minutes, but storing per-endpoint IP lists at their traffic volume is too expensive. What is the lightweight design?",
+      "answer": "Keep a HyperLogLog per endpoint per 5-minute window and alert when its cardinality estimate spikes above baseline. Distinct-IP counts cost a few KB per endpoint no matter the traffic, and a botnet's signature is precisely a surge in distinct sources — approximate counts are plenty for anomaly detection."
+    },
+    {
+      "id": "data-structures-for-big-data-25",
+      "type": "scenario",
+      "concept": "HyperLogLog cache sizing use case: working-set estimation",
+      "question": "A travel-booking site is about to add a Redis cache in front of its hotel-details service. They know the request rate but have no idea how much memory to provision. How can a HyperLogLog run against production traffic answer the sizing question?",
+      "answer": "Stream the requested keys through an HLL (per hour or per day) to estimate the working set — how many distinct keys are actually touched in a window. Cache capacity should be sized to that distinct-key count times average object size, not to raw QPS, and HLL measures it for kilobytes of overhead."
+    },
+    {
+      "id": "data-structures-for-big-data-26",
+      "type": "scenario",
+      "concept": "Approximate quantiles purpose: exact percentiles require storing all samples",
+      "question": "A platform team computes exact p99 latency by logging every request duration to disk and sorting the full day's samples in a nightly batch job. Storage is ballooning and engineers only see yesterday's numbers. What should replace this, and what is the trade?",
+      "answer": "A streaming histogram or quantile sketch: it ingests each sample into a bounded-size structure and answers p50/p95/p99 continuously in real time. The trade is a small bounded error on the percentile values in exchange for constant memory instead of storing every sample."
+    },
+    {
+      "id": "data-structures-for-big-data-27",
+      "type": "scenario",
+      "concept": "Fixed-width buckets weakness: wasted resolution on skewed distributions",
+      "question": "An IoT platform histograms message-processing latency using 100 fixed buckets of 10ms each, spanning 0 to 1000ms. Most messages complete in under 5ms — so p50 just reads '0-10ms' — while rare 30-second stalls all pile into a single overflow bucket. What is the structural problem with this histogram?",
+      "answer": "Fixed-width buckets allocate resolution uniformly, but latency is heavily skewed: nearly all the mass lands in one bucket (no precision where it matters) while the interesting tail lies beyond the range entirely. Skewed or wide-ranging data needs exponential or adaptive bucket boundaries instead."
+    },
+    {
+      "id": "data-structures-for-big-data-28",
+      "type": "scenario",
+      "concept": "Exponential buckets: constant relative error across orders of magnitude",
+      "question": "An observability vendor must report latency percentiles within a few percent of the true value whether the measurement is 1 millisecond or 30 seconds. Why do exponentially-spaced bucket boundaries (each boundary a constant multiple of the last) meet this requirement where fixed-width buckets cannot?",
+      "answer": "With exponential boundaries every bucket spans the same ratio, so the worst-case error is a constant percentage of the value at every scale — a few percent at 1ms and a few percent at 30s alike. Fixed-width buckets give absolute error, which is uselessly coarse at the low end or requires an absurd bucket count to cover the range."
+    },
+    {
+      "id": "data-structures-for-big-data-29",
+      "type": "scenario",
+      "concept": "Dynamic histograms: bucket boundaries adapt to observed data",
+      "question": "A developer-tools company lets customers record arbitrary custom metrics — one metric might range 0-1, another 0-10 billion. Every preconfigured bucket layout they ship ends up wrong for someone. What histogram approach removes the need to know the distribution up front, and what is its cost?",
+      "answer": "A dynamic/adaptive histogram (t-digest style): it adjusts its bucket boundaries from the data itself, merging and splitting so precision concentrates where the mass and the tails actually are. The cost is extra implementation complexity and somewhat less predictable error bounds than fixed schemes."
+    },
+    {
+      "id": "data-structures-for-big-data-30",
+      "type": "scenario",
+      "concept": "Percentiles cannot be averaged across servers: merge histograms instead",
+      "question": "A video streaming service runs 20 API servers, each reporting its own p99 latency. The dashboard displays the average of the 20 p99 values. During an incident where one server degrades badly, the graph barely moves. What is mathematically wrong with this dashboard, and what is the correct aggregation?",
+      "answer": "Percentiles are not averageable — the mean of per-server p99s is not the fleet's p99, and a single sick server is diluted 20-to-1. Each server must export its underlying histogram or quantile sketch; the aggregator merges those (histograms with identical bucket boundaries merge by summing counts) and computes p99 on the combined distribution."
+    },
+    {
+      "id": "data-structures-for-big-data-31",
+      "type": "scenario",
+      "concept": "SLO monitoring: percentile-defined objectives require percentile tracking",
+      "question": "A payments API has an SLO stating '99% of requests complete within 200ms.' An SRE sets up alerting on average latency crossing 200ms, reasoning it's simpler. Weeks later customers report widespread slow requests while no alert ever fired. Why did the alert design fail?",
+      "answer": "The SLO is a percentile guarantee, and the mean says nothing about it — average latency can sit at 50ms while 5% of requests take 2 seconds, blowing the SLO with no alert. Compliance must be measured by tracking p99 directly via a quantile sketch or histogram and alerting on that."
+    },
+    {
+      "id": "data-structures-for-big-data-32",
+      "type": "scenario",
+      "concept": "A/B testing: compare distributions and tails, not just means",
+      "question": "A food delivery app A/B tests a rewritten checkout flow. Mean completion time is identical in both variants, so the team declares it neutral and ships variant B — then support tickets about checkout hangs spike. What did the analysis miss?",
+      "answer": "They compared only the means, which can match while the distributions differ wildly — B likely regressed the tail (p95/p99), hanging for a minority of users while being marginally faster for the rest. Experiment analysis should compare percentile profiles per variant, which quantile sketches make cheap."
+    },
+    {
+      "id": "data-structures-for-big-data-33",
+      "type": "scenario",
+      "concept": "Autoscaling: tail latency leads mean latency as a saturation signal",
+      "question": "A multiplayer game backend autoscales when mean request latency crosses a threshold. Players consistently report lag spikes several minutes before scaling ever triggers. Why is the mean a lagging signal here, and what should drive scaling instead?",
+      "answer": "Under rising load, queuing hurts the slowest requests first: p95/p99 degrade sharply while the mean stays diluted by the fast majority. By the time the mean moves, users have been suffering for minutes. Scale on tail percentiles — they are the leading indicator of saturation."
+    },
+    {
+      "id": "data-structures-for-big-data-34",
+      "type": "scenario",
+      "concept": "Load balancing on tail latency: per-backend histograms expose degraded instances that averages hide",
+      "question": "A checkout service sits behind a load balancer that spreads requests round-robin across 12 identical app servers and health-checks each with a simple ping. One server's failing disk makes 5% of its requests take 8 seconds, yet its pings succeed and its average latency looks normal, so it keeps receiving full traffic. What should the load balancer track per backend to catch this, and why does its current signal miss it?",
+      "answer": "Track each backend's latency distribution — a per-backend histogram or quantile sketch — and drain or route around any instance whose p95/p99 diverges from the fleet. Pings and the mean both stay healthy because 95% of requests are fine; only tail percentiles expose an instance that is slow for a meaningful minority of its traffic."
+    },
+    {
+      "id": "data-structures-for-big-data-35",
+      "type": "scenario",
+      "concept": "Interview narrative: exact solution first, then justify the sketch",
+      "question": "In a system design interview about a video platform, a candidate is asked to count unique video viewers and immediately answers 'HyperLogLog' with no other discussion. The interviewer keeps probing skeptically. What stronger narrative should the candidate have used?",
+      "answer": "Start with the exact approach — a deduplicating set per video — then do the memory math showing it collapses at billions of viewer-video pairs, confirm that small error is tolerable for a view counter, and only then introduce HLL as the justified trade. Naming the structure without the reasoning reads as buzzword recall, not judgment."
+    },
+    {
+      "id": "data-structures-for-big-data-36",
+      "type": "scenario",
+      "concept": "Matching the structure to the question: membership vs frequency vs cardinality vs quantiles",
+      "question": "A search team needs to report how many DISTINCT queries were issued today. One engineer proposes a count-min sketch since 'it's the counting sketch.' Why is that the wrong tool, and what is the right way to pick among these structures?",
+      "answer": "Count-min answers 'how many times did THIS item occur,' not 'how many different items occurred' — distinct counting is HyperLogLog's job. Pick by question shape: membership tests want a Bloom filter, per-item frequency wants count-min, distinct counts want HLL, and percentiles want a quantile sketch."
+    }
+  ]
+}

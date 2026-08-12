@@ -1,0 +1,270 @@
+{
+  "section": "patterns",
+  "subsection": "Handling Large Blobs",
+  "source_url": "https://www.hellointerview.com/learn/system-design/patterns/large-blobs",
+  "concepts": [
+    "The ~10MB rule of thumb for choosing object storage over the database",
+    "Symptoms of storing large binaries inside a relational database",
+    "Server-as-proxy antipattern creating a bandwidth bottleneck",
+    "Memory exhaustion from buffering large uploads in app servers",
+    "Cost inefficiency of scaling compute just to move bytes",
+    "Object-store durability versus local server disk",
+    "Presigned URLs grant temporary scoped access without shipping credentials",
+    "In the direct upload flow the client itself transfers the bytes",
+    "Direct downloads via presigned GET from a private bucket",
+    "Short expiration windows limit the blast radius of leaked URLs",
+    "Multipart upload requires an explicit complete call with the part manifest",
+    "Resumable uploads re-send only the missing parts after failure",
+    "Parallel part uploads raise throughput on high-latency links",
+    "Persisted per-chunk state enables accurate progress and cross-session resume",
+    "File fingerprinting identifies the same file across sessions for resume and dedup",
+    "S3 size limits: 5GB single PUT, 5TB via multipart, multipart recommended above ~100MB",
+    "S3 multipart part constraints: 5MB minimum part size and 10,000-part cap drive chunk sizing",
+    "State drift between metadata database and blob storage",
+    "Client-side completion confirmation is unreliable and untrustworthy",
+    "Storage event notifications as the reliable completion signal",
+    "Pending status lifecycle keeps half-uploaded files invisible",
+    "Garbage-collecting abandoned uploads via lifecycle rules and metadata sweeps",
+    "Cloud provider terminology: Azure's equivalent of a presigned URL",
+    "Recognizing the interview cue: any user-file requirement triggers this pattern",
+    "When not to use: small structured payloads belong in the database",
+    "Enforcing size and content-type limits inside the signed upload policy",
+    "Rate limits and quotas on the presigned-URL issuance endpoint",
+    "Quarantine and async scanning before uploads become downloadable",
+    "Metadata belongs in the database; the bucket holds only bytes",
+    "CDN edge caching for fast global downloads",
+    "Signed CDN URLs keep private content protected at the edge",
+    "HTTP range requests enable seeking and partial downloads"
+  ],
+  "question_count": 32,
+  "questions": [
+    {
+      "id": "large-blobs-01",
+      "type": "scenario",
+      "concept": "The ~10MB rule of thumb for choosing object storage over the database",
+      "question": "An e-commerce marketplace is adding seller-uploaded product demo videos averaging 200MB. One engineer proposes a video_bytes BLOB column in the existing MySQL orders database \"so everything stays in one place\"; another wants an object store with just a reference in MySQL. Which approach is right, and what heuristic decides it?",
+      "answer": "The object store. Anything above roughly 10MB that you never need to query with SQL belongs in blob storage, with only a pointer and metadata in the database. 200MB videos are pure bytes — the database gains nothing from holding them."
+    },
+    {
+      "id": "large-blobs-02",
+      "type": "scenario",
+      "concept": "Symptoms of storing large binaries inside a relational database",
+      "question": "A B2B invoicing SaaS has stored customer PDF invoices as bytea columns in Postgres for two years. Nightly backups that once took 20 minutes now take 6 hours, read replicas lag by minutes during business hours, and unrelated queries on the invoices table have slowed. What is going wrong?",
+      "answer": "The blobs are bloating the database: every backup and every replication stream must ship gigabytes of PDF bytes, and the fat rows degrade query performance. Moving the PDFs to object storage and keeping only metadata rows fixes all three symptoms at once."
+    },
+    {
+      "id": "large-blobs-03",
+      "type": "scenario",
+      "concept": "Server-as-proxy antipattern creating a bandwidth bottleneck",
+      "question": "A messaging app added 1GB video attachments, uploaded via client to API server to S3. Every evening the API servers' network interfaces saturate, and even tiny requests like marking messages read start timing out fleet-wide. What is going wrong?",
+      "answer": "The app servers are proxying every attachment byte, so file traffic consumes the same NICs and connections as the rest of the API — the servers became a bandwidth bottleneck. The fix is presigned URLs so clients upload directly to S3 and file bytes never touch the API fleet."
+    },
+    {
+      "id": "large-blobs-04",
+      "type": "scenario",
+      "concept": "Memory exhaustion from buffering large uploads in app servers",
+      "question": "A ride-hailing company's driver-verification service accepts license scans and dashboard videos. Each request handler reads the entire uploaded file into memory before writing it to storage. During Monday-morning onboarding surges the service OOM-kills repeatedly even though CPU usage is low. What should the team change, and why?",
+      "answer": "Stop holding file bytes in the service at all: issue presigned URLs so drivers upload directly to blob storage. Buffering N concurrent large files in RAM guarantees memory exhaustion under load — the crash is a direct consequence of proxying."
+    },
+    {
+      "id": "large-blobs-05",
+      "type": "scenario",
+      "concept": "Cost inefficiency of scaling compute just to move bytes",
+      "question": "A gaming platform lets players share replay files. To keep upload latency acceptable, the team quadrupled their app-server fleet, yet CPU utilization sits near 10% and the monthly compute bill has tripled. What does this pattern of symptoms tell you?",
+      "answer": "They are paying compute prices to do a data-transfer job. The fleet scaled for bandwidth, not processing — object storage already handles ingest natively and cheaply, so direct client-to-storage uploads would let them shrink the fleet back down."
+    },
+    {
+      "id": "large-blobs-06",
+      "type": "scenario",
+      "concept": "Object-store durability versus local server disk",
+      "question": "An IoT camera startup saved uploaded clips to the attached disk of its single application VM. The disk failed and three months of customer footage is unrecoverable. Which property of managed object storage would have prevented this, and roughly how strong is it?",
+      "answer": "Durability. Object stores replicate every object across multiple devices and availability zones, advertising around 99.999999999% (11 nines) durability, so a single disk or host failure loses nothing. A lone VM disk is a single point of data loss."
+    },
+    {
+      "id": "large-blobs-07",
+      "type": "scenario",
+      "concept": "Presigned URLs grant temporary scoped access without shipping credentials",
+      "question": "A fintech app must let mobile users upload KYC selfies straight into a private bucket, but the security team forbids embedding any storage credentials in the mobile binary. How can clients get permission to write to the bucket, and what makes the mechanism safe?",
+      "answer": "The backend generates a presigned URL: a cryptographically signed link scoped to one object key, one operation, and a short time window. The client uses the URL directly with no credentials on the device, and the signature cannot be altered to reach other keys or operations."
+    },
+    {
+      "id": "large-blobs-08",
+      "type": "scenario",
+      "concept": "In the direct upload flow the client itself transfers the bytes",
+      "question": "A ticketing platform \"adopted presigned URLs\": the client sends the seat-map image to the API server, which attaches a presigned URL and forwards the bytes to storage. Upload load on the API servers has not dropped at all. What did the team get wrong?",
+      "answer": "They kept the server in the data path. The whole point is that the backend only issues the URL and records metadata, and the client itself PUTs the file to storage using that URL — the bytes must never transit the API server."
+    },
+    {
+      "id": "large-blobs-09",
+      "type": "scenario",
+      "concept": "Direct downloads via presigned GET from a private bucket",
+      "question": "A telehealth portal keeps lab-result PDFs in a private bucket. Today the API server downloads each PDF from the bucket and streams it to the patient's browser, and downloads are slow under load. The bucket must stay private. What should they change?",
+      "answer": "Have the API authorize the request, then return a presigned GET URL so the browser fetches the PDF directly from storage. The bucket stays private — the time-limited signature is the access grant — and the server stops relaying bytes."
+    },
+    {
+      "id": "large-blobs-10",
+      "type": "scenario",
+      "concept": "Short expiration windows limit the blast radius of leaked URLs",
+      "question": "A legal-tech file-sharing tool generates presigned download links that expire after 7 days for convenience. A link to a confidential deposition leaked into a public Slack channel and remained fetchable by anyone for days. What should the team change, and why?",
+      "answer": "Cut the expiry to minutes and mint a fresh URL on each authorized request. Expiration is the only control left once a signed URL escapes — a short window turns a leak into a near-miss instead of a week-long open door."
+    },
+    {
+      "id": "large-blobs-11",
+      "type": "scenario",
+      "concept": "Multipart upload requires an explicit complete call with the part manifest",
+      "question": "A cloud-backup product uploads 10GB archives with S3 multipart upload. Logs show every part uploading successfully with an ETag returned, yet the final object never appears in the bucket. Which step is the client missing?",
+      "answer": "CompleteMultipartUpload. Parts sit unassembled under the upload ID until the client sends the completion call with the part-number-to-ETag manifest; only then does storage stitch them into the visible object."
+    },
+    {
+      "id": "large-blobs-12",
+      "type": "scenario",
+      "concept": "Resumable uploads re-send only the missing parts after failure",
+      "question": "A drone-mapping SaaS has field crews upload 4GB imagery bundles over flaky rural LTE. Today a connection drop at 99% restarts the transfer from byte zero, and crews sometimes retry for hours. What should the team change, and why does it work?",
+      "answer": "Switch to chunked multipart uploads and track which parts completed. After a drop, the client asks which parts storage already has and re-uploads only the missing ones, so a 99% failure costs one chunk, not 4GB."
+    },
+    {
+      "id": "large-blobs-13",
+      "type": "scenario",
+      "concept": "Parallel part uploads raise throughput on high-latency links",
+      "question": "A music-mastering web app uploads 2GB WAV files as one long PUT. Users on other continents report uploads using only a small fraction of their measured bandwidth, though nothing is throttled. How can the app speed these uploads up without any network changes?",
+      "answer": "Split the file into parts and upload several concurrently. A single connection on a high-latency path can't fill the pipe; parallel part uploads multiply effective throughput and multipart APIs accept parts in any order."
+    },
+    {
+      "id": "large-blobs-14",
+      "type": "scenario",
+      "concept": "Persisted per-chunk state enables accurate progress and cross-session resume",
+      "question": "A job board lets applicants record video resumes on their phones. If the app is killed mid-upload, reopening it shows the progress bar back at 0% even though most chunks reached storage, and users often start over. What piece of state management is missing?",
+      "answer": "Persistence of per-chunk completion. The client (or backend) should record which parts finished — or query the storage service's list-parts API — so on relaunch it can render true progress and resume from the last completed chunk."
+    },
+    {
+      "id": "large-blobs-15",
+      "type": "scenario",
+      "concept": "File fingerprinting identifies the same file across sessions for resume and dedup",
+      "question": "A cloud-drive product supports resuming interrupted uploads, but only within one browser session. When a user retries yesterday's failed 8GB upload from a different laptop, the backend cannot tell it is the same file as the half-finished attempt it already has parts for, so it starts from zero. What should the client compute and send, and what does it enable?",
+      "answer": "A fingerprint: a hash of the file's content (or of its chunks) computed before uploading. Presenting it lets the server match the new attempt to the stored partial upload and resume it, and if the fingerprint matches an already-complete object it can skip the upload entirely — deduplication."
+    },
+    {
+      "id": "large-blobs-16",
+      "type": "true_false",
+      "concept": "S3 size limits: 5GB single PUT, 5TB via multipart, multipart recommended above ~100MB",
+      "question": "A single S3 PUT request can upload an object of any size, so multipart upload is purely a throughput optimization.",
+      "answer": "False — a single PUT is capped at 5GB, so multipart upload is mandatory for anything larger (objects up to 5TB) and is recommended for files over roughly 100MB for speed and resumability."
+    },
+    {
+      "id": "large-blobs-17",
+      "type": "scenario",
+      "concept": "S3 multipart part constraints: 5MB minimum part size and 10,000-part cap drive chunk sizing",
+      "question": "A log-archiving service uploads 100GB bundles to S3 with multipart upload and, to make retries cheap, an engineer sets the chunk size to 1MB. Uploads start erroring once the part number passes 10,000, and even smaller test files are rejected at the completion step. Which two part-level limits is the design hitting, and what chunk size fixes it?",
+      "answer": "A multipart upload allows at most 10,000 parts, and every part except the last must be at least 5MB — 1MB chunks break both rules. Chunks must be at least 5MB and big enough to keep the part count under 10,000, so at least ~10MB for a 100GB file."
+    },
+    {
+      "id": "large-blobs-18",
+      "type": "scenario",
+      "concept": "State drift between metadata database and blob storage",
+      "question": "A social feed's support queue shows two recurring bugs: posts whose database row exists but whose video 404s in the bucket, and orphan videos in the bucket with no database row. What class of problem is this, and what does it stem from?",
+      "answer": "State synchronization between the metadata store and the blob store. The two systems share no transaction, so a crash between 'write DB row' and 'upload blob' (in either order) leaves them disagreeing — you need a completion signal plus periodic reconciliation."
+    },
+    {
+      "id": "large-blobs-19",
+      "type": "scenario",
+      "concept": "Client-side completion confirmation is unreliable and untrustworthy",
+      "question": "An online-lecture platform flips a video's status to 'ready' when the uploader's browser calls /uploadComplete after its direct upload. Some lectures stay stuck in 'uploading' forever, and a pen-tester managed to mark a nonexistent file as ready. What is the weakness in this design?",
+      "answer": "It trusts the client. Browsers close before confirming (stuck files) and a malicious client can confirm without uploading (fake files). Completion must be verified server-side — check the object exists in storage, or better, consume storage event notifications."
+    },
+    {
+      "id": "large-blobs-20",
+      "type": "scenario",
+      "concept": "Storage event notifications as the reliable completion signal",
+      "question": "A print-on-demand shop needs artwork marked available in its database the moment the file lands in the bucket, even if the customer closes the tab a millisecond after upload finishes. What mechanism gives the backend a dependable completion signal?",
+      "answer": "Bucket event notifications: storage emits an ObjectCreated event (S3 to SQS/Lambda, GCS to Pub/Sub) that a backend consumer uses to flip the database status. The storage system itself reports completion, so no client cooperation is needed."
+    },
+    {
+      "id": "large-blobs-21",
+      "type": "scenario",
+      "concept": "Pending status lifecycle keeps half-uploaded files invisible",
+      "question": "A real-estate site inserts a photo's database row at the moment it issues the presigned upload URL. Listings now show broken image tiles for photos still mid-upload or abandoned entirely. What should change in how the metadata row is handled?",
+      "answer": "Create the row with a pending/uploading status and only flip it to complete once the upload is confirmed. Queries that render listings should filter to completed files, so half-done or abandoned uploads never surface to viewers."
+    },
+    {
+      "id": "large-blobs-22",
+      "type": "scenario",
+      "concept": "Garbage-collecting abandoned uploads via lifecycle rules and metadata sweeps",
+      "question": "A design-collaboration SaaS notices its storage bill creeping upward. An audit finds thousands of weeks-old incomplete multipart uploads and matching 'pending' metadata rows left by users who closed their laptops mid-upload. What should the team put in place?",
+      "answer": "Cleanup on both sides: a bucket lifecycle rule that aborts incomplete multipart uploads after a few days (their invisible parts are still billed), and a background sweeper that deletes or expires stale pending metadata rows."
+    },
+    {
+      "id": "large-blobs-23",
+      "type": "mcq2",
+      "concept": "Cloud provider terminology: Azure's equivalent of a presigned URL",
+      "question": "Your team is porting a direct-upload design from AWS to Azure. Which Azure mechanism plays the role of an S3 presigned URL?",
+      "options": [
+        "A shared access signature (SAS) URL",
+        "An Event Grid subscription"
+      ],
+      "answer": "A shared access signature (SAS) URL — SAS tokens are Azure's time-limited, scoped-access URLs for Blob Storage; Event Grid is the notification service, the analog of S3 event notifications, not of presigned access."
+    },
+    {
+      "id": "large-blobs-24",
+      "type": "scenario",
+      "concept": "Recognizing the interview cue: any user-file requirement triggers this pattern",
+      "question": "In a system design interview for a food-delivery platform, the interviewer adds: \"restaurants also upload menu photos and hygiene-certificate PDFs.\" The candidate starts sketching how those files fit into the restaurants table. What should this requirement have triggered instead?",
+      "answer": "The large-blob pattern: files go to object storage via presigned direct upload with a CDN for serving, and the database keeps only metadata and keys. Any 'users upload files' requirement is the standing cue to reach for this pattern, not for table columns."
+    },
+    {
+      "id": "large-blobs-25",
+      "type": "scenario",
+      "concept": "When not to use: small structured payloads belong in the database",
+      "question": "A smart-home platform ingests 2KB JSON telemetry readings every few seconds per device. An engineer proposes issuing a presigned URL for each reading so devices write directly to S3, \"for scalability like the big file systems do.\" Why is this the wrong tool here?",
+      "answer": "The pattern exists for large blobs; 2KB structured readings that need querying belong in a database or stream. Per-reading presigned URLs add a signing round-trip and per-object overhead while removing the ability to query — complexity with zero benefit."
+    },
+    {
+      "id": "large-blobs-26",
+      "type": "scenario",
+      "concept": "Enforcing size and content-type limits inside the signed upload policy",
+      "question": "A podcast-hosting service caps episodes at 500MB, checked in the web form. A user scripted a request to the presigned URL endpoint and uploaded an 80GB file, spiking the storage bill. Given the server never sees the bytes, where must the limit be enforced?",
+      "answer": "In the signed upload policy itself: for example an S3 presigned POST with a content-length-range condition (and expected content-type), so storage rejects any upload outside the limits. Once the URL is issued the server is out of the data path, so only conditions baked into the signature can be enforced."
+    },
+    {
+      "id": "large-blobs-27",
+      "type": "scenario",
+      "concept": "Rate limits and quotas on the presigned-URL issuance endpoint",
+      "question": "A free-tier note-taking app finds one account requesting thousands of presigned upload URLs per minute and filling the bucket with junk objects, each individually within the size limit. Where is the right choke point to stop this, and how?",
+      "answer": "The issuance endpoint — it's the last step the backend controls. Rate-limit presigned-URL requests per user and enforce storage quotas before signing, refusing new URLs once an account exceeds its allowance."
+    },
+    {
+      "id": "large-blobs-28",
+      "type": "scenario",
+      "concept": "Quarantine and async scanning before uploads become downloadable",
+      "question": "A recruiting platform lets candidates upload resumes that recruiters then download. Security asks: since files go straight from candidate to bucket, how do we ensure a recruiter never downloads malware? What flow should the team propose?",
+      "answer": "Quarantine by default: mark each upload unavailable until an asynchronous virus/content scan — triggered by the storage upload event — passes, then flip the status to downloadable. Files that fail are deleted or flagged, never served."
+    },
+    {
+      "id": "large-blobs-29",
+      "type": "scenario",
+      "concept": "Metadata belongs in the database; the bucket holds only bytes",
+      "question": "A project-management tool renders each project's attachment list by calling the bucket's ListObjects API on page load. Listings are slow, and the team can't filter by uploader or sort by upload date. What is the correct division of labor they're missing?",
+      "answer": "Metadata belongs in the database: a row per file with owner, name, size, type, status, and the blob key, indexed for listing, search, and permission checks. The bucket stores only bytes under opaque keys and is never queried to answer product questions."
+    },
+    {
+      "id": "large-blobs-30",
+      "type": "scenario",
+      "concept": "CDN edge caching for fast global downloads",
+      "question": "A 3D-printing model marketplace serves 1GB model bundles directly from a bucket in us-east-1. Customers in Australia report downloads several times slower than US customers, and origin egress fees are climbing. What should the team add, and why does it fix both problems?",
+      "answer": "A CDN in front of the bucket. Popular files get cached at edge locations near users, so Australians download from a nearby edge instead of crossing the Pacific, and cache hits stop billing origin egress."
+    },
+    {
+      "id": "large-blobs-31",
+      "type": "scenario",
+      "concept": "Signed CDN URLs keep private content protected at the edge",
+      "question": "A fitness-subscription app moved its paid workout videos behind a CDN for speed, but now anyone who obtains a video URL can stream premium content without an account. The bucket itself is locked down to the CDN. How should access control work now?",
+      "answer": "Use signed CDN URLs (or signed cookies): the backend authenticates the subscriber, then issues a short-lived signed URL the CDN validates before serving. Authorization moves to the edge, and unsigned or expired requests are refused."
+    },
+    {
+      "id": "large-blobs-32",
+      "type": "scenario",
+      "concept": "HTTP range requests enable seeking and partial downloads",
+      "question": "An online cooking-class site serves 2GB lesson videos from blob storage via a CDN. When a student jumps to minute 40, the player stalls because it is downloading the file from the beginning. Which HTTP mechanism should the player use, and what does it do?",
+      "answer": "Range requests: the player sends a Range header to fetch only the byte window it needs, and blob stores and CDNs serve the partial content. That makes seeking instant and also enables resuming interrupted downloads."
+    }
+  ]
+}

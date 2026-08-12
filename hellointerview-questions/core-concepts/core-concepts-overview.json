@@ -1,0 +1,290 @@
+{
+  "section": "core-concepts",
+  "subsection": "Core Concepts Overview",
+  "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/core-concepts",
+  "concepts": [
+    "Vertical scaling as the default first move",
+    "Limits of vertical scaling: hardware ceiling and single point of failure",
+    "Horizontal scaling introduces work distribution and data distribution problems",
+    "Statelessness as a prerequisite for naive horizontal scaling",
+    "Load-aware balancing vs round robin for variable-cost work",
+    "Queues to buffer bursts and decouple producers from workers",
+    "Hot spots from skewed keys under hash distribution",
+    "Scatter-gather tail latency and failure amplification",
+    "Data locality: co-locate related data so one node serves a request",
+    "Affinity routing to exploit node-local caches",
+    "Synchronous replication's write-latency and availability cost",
+    "Asynchronous replication lag and read-your-writes violations",
+    "Data loss on failover with asynchronous replication",
+    "Read replicas before sharding for read-heavy workloads",
+    "Race conditions on shared state require atomicity",
+    "Optimistic concurrency control for low contention",
+    "Pessimistic locking for high-contention hot keys",
+    "Lock granularity",
+    "Lock duration: never hold locks across slow external calls",
+    "Deadlock avoidance via consistent lock ordering",
+    "Distributed locks need TTL/expiry",
+    "Authentication vs authorization",
+    "API gateway as central security enforcement point",
+    "Encryption in transit is table stakes",
+    "At-rest encryption vs application-level encryption with client-held keys",
+    "Rate limiting against abuse and scraping",
+    "Preventing resource enumeration: unguessable IDs plus access checks",
+    "Infrastructure-level monitoring",
+    "Service-level monitoring: rate, errors, latency percentiles",
+    "Application-level (business-metric) monitoring",
+    "Alert on user-facing symptoms, not cause-level signals",
+    "Premature distribution is an interview anti-signal",
+    "Calibrating security depth in an interview",
+    "Capacity estimation at decision points, not upfront"
+  ],
+  "question_count": 34,
+  "questions": [
+    {
+      "id": "core-concepts-overview-01",
+      "type": "scenario",
+      "concept": "Vertical scaling as the default first move",
+      "question": "A three-person startup runs its project-management SaaS on a mid-size cloud database instance nearing 70% CPU. The lead engineer proposes a six-week project to shard the database across four nodes before the next marketing push. What should the team do instead, and why?",
+      "answer": "Scale vertically first — move to a larger instance. It is an operationally trivial change, a modern single machine handles enormous load, and sharding's complexity is only justified once a big box genuinely cannot keep up."
+    },
+    {
+      "id": "core-concepts-overview-02",
+      "type": "scenario",
+      "concept": "Limits of vertical scaling: hardware ceiling and single point of failure",
+      "question": "A brokerage app has responded to growth by repeatedly upgrading its single database server; it is now on the largest instance its cloud provider offers and usage is still climbing. Last month that instance's hardware failed and the entire product was down for an hour. What two limits of the team's scaling strategy has it just hit?",
+      "answer": "Vertical scaling has a hard ceiling — there is always a biggest machine — and it concentrates the whole system on a single point of failure. The team now needs horizontal scaling and redundancy, not another upgrade."
+    },
+    {
+      "id": "core-concepts-overview-03",
+      "type": "scenario",
+      "concept": "Horizontal scaling introduces work distribution and data distribution problems",
+      "question": "A ride-hailing company moved surge-price computation from one large server to ten smaller workers. Now some workers sit idle while others fall behind, and every worker spends much of its time fetching trip data over the network from other machines. What two fundamental problem classes did the move introduce?",
+      "answer": "Work distribution and data distribution. Going horizontal forces you to route work evenly across nodes and to keep data near the compute that needs it — neither problem existed on the single machine."
+    },
+    {
+      "id": "core-concepts-overview-04",
+      "type": "scenario",
+      "concept": "Statelessness as a prerequisite for naive horizontal scaling",
+      "question": "A multiplayer game keeps each live match's state in the server process's memory. To handle launch traffic, ops adds five more instances behind a round-robin load balancer, and players immediately start getting 'match not found' errors mid-game. What is going wrong?",
+      "answer": "The service is stateful, so naive horizontal scaling breaks it: each request round-robins to a random instance, but the match state lives in only one process's memory. Either externalize the state or route each match's traffic to the instance that owns it."
+    },
+    {
+      "id": "core-concepts-overview-05",
+      "type": "scenario",
+      "concept": "Load-aware balancing vs round robin for variable-cost work",
+      "question": "A video platform's transcoding API sits behind a round-robin load balancer. Requests range from 10-second clips to 2-hour movies, and some servers are pegged while others idle. What should the team change about the load balancing, and why?",
+      "answer": "Switch from round robin to a load-aware strategy such as least-connections or utilization-based routing. Round robin assumes requests cost roughly the same; with wildly variable work sizes it piles heavy jobs onto unlucky servers."
+    },
+    {
+      "id": "core-concepts-overview-06",
+      "type": "scenario",
+      "concept": "Queues to buffer bursts and decouple producers from workers",
+      "question": "An online-course platform sends enrollment confirmation emails synchronously inside the enrollment request handler. During a popular course launch, enrollments spike 50x, checkout latency balloons, and some emails are silently dropped when the mail provider throttles. What should the team change?",
+      "answer": "Put a queue between enrollment and email delivery. The queue absorbs the burst, workers drain it at the mail provider's sustainable rate, and the user-facing request no longer waits on — or fails because of — a slow side task."
+    },
+    {
+      "id": "core-concepts-overview-07",
+      "type": "scenario",
+      "concept": "Hot spots from skewed keys under hash distribution",
+      "question": "A social feed service distributes fan-out work across workers by hashing the post author's ID. Whenever a celebrity with 40 million followers posts, one worker saturates while the rest idle, and feed delivery stalls. Why does the 'even' hash distribution fail here?",
+      "answer": "Hashing spreads keys evenly, not load — one skewed key can carry orders of magnitude more work than the others, creating a hot spot. Heavy keys must be split further, for example by partitioning the celebrity's fan-out into sub-tasks spread across many workers."
+    },
+    {
+      "id": "core-concepts-overview-08",
+      "type": "scenario",
+      "concept": "Scatter-gather tail latency and failure amplification",
+      "question": "A home-goods marketplace's search service fans each query out to all 40 index shards and merges the results. Median latency is fine, but p99 is terrible — and it got worse after the team added shards to 'speed things up'. What is going on?",
+      "answer": "Scatter-gather latency is set by the slowest shard, so p99 tracks the worst straggler, and more shards raise the odds every query touches at least one slow node. It also amplifies failures: one bad shard degrades every single query."
+    },
+    {
+      "id": "core-concepts-overview-09",
+      "type": "scenario",
+      "concept": "Data locality: co-locate related data so one node serves a request",
+      "question": "A chat product stores messages partitioned by message ID. Opening a conversation now requires fetching from nearly every partition, and conversation loads are slow and fragile. What should change in how the data is distributed?",
+      "answer": "Co-locate related data: partition by conversation ID so all of a conversation's messages live together and a single node serves the read. The guiding rule of data distribution is designing so a typical request is answered by one node, not a cross-node fan-out."
+    },
+    {
+      "id": "core-concepts-overview-10",
+      "type": "scenario",
+      "concept": "Affinity routing to exploit node-local caches",
+      "question": "A B2B analytics service builds a large per-tenant in-memory cache to render dashboards. The service runs on eight nodes behind a round-robin balancer; cache hit rates are poor and every node ends up holding copies of the same tenants' data. What routing change fixes this, and why?",
+      "answer": "Route by tenant — sticky or consistent-hash routing — so a tenant's requests always land on the node already holding its cache. Affinity routing is the right choice when nodes hold valuable per-key state; spraying requests randomly destroys that locality."
+    },
+    {
+      "id": "core-concepts-overview-11",
+      "type": "scenario",
+      "concept": "Synchronous replication's write-latency and availability cost",
+      "question": "A payments company replicates its ledger synchronously from Virginia to a replica in Frankfurt for durability. Since the change, every write takes an extra ~100ms, and during a Frankfurt network incident all writes started failing outright. Why is this the expected behavior of the chosen design?",
+      "answer": "Synchronous replication makes every write wait for the replica's acknowledgment, so writes inherit the cross-region round trip and the replica's availability. That is the trade: stronger durability and consistency in exchange for write latency and coupled failure."
+    },
+    {
+      "id": "core-concepts-overview-12",
+      "type": "scenario",
+      "concept": "Asynchronous replication lag and read-your-writes violations",
+      "question": "On a travel-booking site, a user updates their home airport, is redirected to their profile, and sees the old value; refreshing a few seconds later shows the new one. Reads are served from database replicas. What is happening, and what is a standard fix?",
+      "answer": "Asynchronous replication lag: the write hit the primary but the profile read hit a replica that had not applied it yet, violating read-your-writes. Route that user's reads to the primary briefly after a write (or pin the session) rather than abandoning replicas."
+    },
+    {
+      "id": "core-concepts-overview-13",
+      "type": "scenario",
+      "concept": "Data loss on failover with asynchronous replication",
+      "question": "An industrial-sensor platform acknowledges writes as soon as the primary database commits, replicating to a standby asynchronously. The primary's host died, the standby was promoted, and several seconds of acknowledged sensor readings are simply gone. Why?",
+      "answer": "With async replication the primary acknowledges before the standby has the data, so any writes not yet shipped are lost when you fail over. If acknowledged data must survive failover, those writes need synchronous replication, paid for in latency."
+    },
+    {
+      "id": "core-concepts-overview-14",
+      "type": "scenario",
+      "concept": "Read replicas before sharding for read-heavy workloads",
+      "question": "A news site is 95% reads and its single database is CPU-bound during traffic peaks; writes are a trickle. Half the team wants to shard now. What is the better first move, and why?",
+      "answer": "Add read replicas and send read traffic to them — read-heavy load scales nearly linearly with replicas and needs no rearchitecture. Sharding solves write-throughput and data-volume limits this site does not have, at far higher complexity."
+    },
+    {
+      "id": "core-concepts-overview-15",
+      "type": "scenario",
+      "concept": "Race conditions on shared state require atomicity",
+      "question": "During a sneaker drop, a store oversells: with one pair left, two buyers both saw stock '1', both passed the availability check, and both orders were accepted. The stock check and the decrement are separate queries. What class of bug is this, and what is the general remedy?",
+      "answer": "A race condition on shared state — concurrent read-modify-write with no concurrency control. The check and decrement must be made atomic: a conditional or atomic decrement, a transaction holding a lock, or equivalent serialization of the update."
+    },
+    {
+      "id": "core-concepts-overview-16",
+      "type": "scenario",
+      "concept": "Optimistic concurrency control for low contention",
+      "question": "A note-taking app is adding conflict protection for saves. Two users editing the same note at the same moment is rare, but the team plans to grab a database row lock at the start of every editing session. Which concurrency approach fits better, and why?",
+      "answer": "Optimistic concurrency control: store a version on the note, write with a version check, and retry or surface a conflict on the rare mismatch. When contention is rare, paying lock overhead on every save — and holding locks for whole sessions — is pure waste."
+    },
+    {
+      "id": "core-concepts-overview-17",
+      "type": "scenario",
+      "concept": "Pessimistic locking for high-contention hot keys",
+      "question": "An auction site is melting down in the final minute of a hot auction, when hundreds of bids per second target one item: nearly every write fails its version check, retries, and fails again. What should the team switch to, and why?",
+      "answer": "Pessimistic control — take a lock, or funnel bids for hot items through a single serialized writer or queue. Optimistic concurrency assumes conflicts are rare; under heavy contention, retry storms burn throughput on work that mostly gets thrown away."
+    },
+    {
+      "id": "core-concepts-overview-18",
+      "type": "scenario",
+      "concept": "Lock granularity",
+      "question": "A ticketing system takes one lock covering an event's entire seat map for every purchase. Big shows sell one seat at a time while thousands of buyers queue, even though almost none of them want the same seat. What is the design flaw?",
+      "answer": "Lock granularity is far too coarse: buyers of different seats do not actually conflict, but the event-wide lock serializes them anyway. Lock per seat so only genuine conflicts have to wait."
+    },
+    {
+      "id": "core-concepts-overview-19",
+      "type": "scenario",
+      "concept": "Lock duration: never hold locks across slow external calls",
+      "question": "A hotel-booking checkout locks the room-inventory row, then calls a third-party payment API that takes 2–5 seconds, then commits and releases. Under load, database connections pile up and unrelated bookings stall. What rule is being broken?",
+      "answer": "Hold locks as briefly as possible — and never across a slow external call. Reserve the room in a short transaction (for example a temporary hold with an expiry), make the payment call without holding the database lock, then finalize."
+    },
+    {
+      "id": "core-concepts-overview-20",
+      "type": "scenario",
+      "concept": "Deadlock avoidance via consistent lock ordering",
+      "question": "A banking backend processes a transfer by locking the sender's account row first, then the receiver's. When Alice sends money to Bob at the same instant Bob sends money to Alice, both transactions freeze until the database aborts one of them a few seconds later. What happened, and what convention prevents it?",
+      "answer": "A deadlock: each transaction holds one lock while waiting for the lock the other holds, so neither can ever proceed. Acquire locks in a single global order — for example, always lock the lower account ID first — so no cycle of transactions waiting on each other can form."
+    },
+    {
+      "id": "core-concepts-overview-21",
+      "type": "scenario",
+      "concept": "Distributed locks need TTL/expiry",
+      "question": "A freight-dispatch system takes a Redis lock per truck while assigning loads. A worker crashed mid-assignment last week, and since then one truck has never been offered a load — its lock is still held by the dead process. What is the missing safeguard?",
+      "answer": "Distributed locks need a TTL/expiry, ideally with fencing to guard against the stale holder returning. A crashed process can never release its lock, so a lock with no timeout orphans the resource forever."
+    },
+    {
+      "id": "core-concepts-overview-22",
+      "type": "scenario",
+      "concept": "Authentication vs authorization",
+      "question": "In an invoicing SaaS, a logged-in user at company A changes the numeric ID in an invoice URL and successfully downloads company B's invoice. Login is working perfectly. Which security control is missing?",
+      "answer": "Authorization. Authentication proved who the user is, but nothing checked whether that identity may access that specific resource — every data access needs a per-resource permission check, not just a valid session."
+    },
+    {
+      "id": "core-concepts-overview-23",
+      "type": "scenario",
+      "concept": "API gateway as central security enforcement point",
+      "question": "A fintech's twelve microservices each implement their own token validation and rate limiting; audits keep finding inconsistencies, and one internal service was discovered accepting expired tokens for months. What architectural change addresses the root cause?",
+      "answer": "Put an API gateway in front and centralize authentication, token validation, and rate limiting there. One enforcement point applied to every request beats twelve hand-rolled copies that drift and get forgotten."
+    },
+    {
+      "id": "core-concepts-overview-24",
+      "type": "scenario",
+      "concept": "Encryption in transit is table stakes",
+      "question": "A smart-home vendor's devices report telemetry to the cloud over plain HTTP because 'the data is just temperatures' and TLS costs CPU on cheap chips. A security review rejects this. What is the core objection?",
+      "answer": "All traffic needs encryption in transit — plaintext lets anyone on the path read or tamper with the data, and 'harmless' telemetry still leaks occupancy patterns and permits spoofed or modified messages. TLS is table stakes, not optional per data type."
+    },
+    {
+      "id": "core-concepts-overview-25",
+      "type": "scenario",
+      "concept": "At-rest encryption vs application-level encryption with client-held keys",
+      "question": "A journaling app markets 'not even our employees can read your entries.' Engineering proposes enabling the database's disk-level encryption at rest and calling it done. Does that deliver the promise?",
+      "answer": "No. Encryption at rest protects against stolen disks, but the application — and thus employees or attackers with app or database access — still sees plaintext. The promise requires application-level or end-to-end encryption with keys the client controls, so servers only handle ciphertext."
+    },
+    {
+      "id": "core-concepts-overview-26",
+      "type": "scenario",
+      "concept": "Rate limiting against abuse and scraping",
+      "question": "A real-estate site's listing API is being hammered by scrapers pulling the whole catalog, degrading the database for real users. Each individual request is well-formed and authenticated. What control directly addresses this?",
+      "answer": "Rate limiting — cap requests per API key, IP, or user over a time window so no single caller can bulk-extract data or consume outsized capacity. It protects both the data behind exposed endpoints and the system's capacity."
+    },
+    {
+      "id": "core-concepts-overview-27",
+      "type": "scenario",
+      "concept": "Preventing resource enumeration: unguessable IDs plus access checks",
+      "question": "A dating app serves profiles at /profiles/48291, with IDs assigned sequentially. A researcher writes a loop and downloads every profile on the platform in an afternoon. Beyond missing rate limits, what design mistakes enabled the mass harvest?",
+      "answer": "Enumerable sequential IDs combined with missing per-resource authorization: anyone could guess every valid identifier and fetch it. Use unguessable IDs such as UUIDs and verify the requester is actually allowed to view each profile."
+    },
+    {
+      "id": "core-concepts-overview-28",
+      "type": "scenario",
+      "concept": "Infrastructure-level monitoring",
+      "question": "A podcast-hosting company's upload service degrades every few days and eventually crashes; each time, an engineer SSHes in afterward and discovers the host's disk had filled with temp files. Which monitoring layer is missing, and what does it watch?",
+      "answer": "Infrastructure monitoring — host-level metrics like CPU, memory, disk usage, and network. A basic disk-usage alert would have flagged the problem days before it became an outage."
+    },
+    {
+      "id": "core-concepts-overview-29",
+      "type": "scenario",
+      "concept": "Service-level monitoring: rate, errors, latency percentiles",
+      "question": "A food-delivery company's support queue is full of 'the app is slow' complaints, but engineering can only shrug — nobody can say which endpoints are slow, how slow, or for what fraction of requests. What should they instrument first?",
+      "answer": "Service-level monitoring: per-endpoint request rate, error rate, and latency percentiles such as p95/p99. Those signals turn 'feels slow' into a measurable, alertable statement about how the service is behaving."
+    },
+    {
+      "id": "core-concepts-overview-30",
+      "type": "scenario",
+      "concept": "Application-level (business-metric) monitoring",
+      "question": "After a Friday deploy, a streaming service's dashboards stayed green all weekend — CPU normal, latencies fine, error rates low — yet Monday reveals sign-ups flatlined at zero for 60 hours because the deploy broke the final sign-up step in the client. What monitoring gap does this expose?",
+      "answer": "Application-level monitoring: track business metrics like sign-ups per minute and alert on anomalies. Infrastructure and service metrics can be perfectly healthy while the product itself is broken."
+    },
+    {
+      "id": "core-concepts-overview-31",
+      "type": "mcq2",
+      "concept": "Alert on user-facing symptoms, not cause-level signals",
+      "question": "An e-commerce team can configure only one high-urgency page for its checkout service. Which alert should wake an engineer at 3am?",
+      "options": [
+        "Page when any host's CPU exceeds 80%",
+        "Page when the checkout success rate drops below its normal baseline"
+      ],
+      "answer": "Page when the checkout success rate drops below its normal baseline — alert on user-facing symptoms because they capture every failure mode that matters, while cause-level signals like CPU page noisily and miss failures that never touch CPU."
+    },
+    {
+      "id": "core-concepts-overview-32",
+      "type": "true_false",
+      "concept": "Premature distribution is an interview anti-signal",
+      "question": "Opening a system design interview with a fully distributed, sharded, multi-region architecture demonstrates seniority.",
+      "answer": "False — seniority shows in starting simple and adding distribution only when the load numbers demand it. A single well-tuned machine or database goes further than most candidates assume, and unjustified complexity reads as a red flag."
+    },
+    {
+      "id": "core-concepts-overview-33",
+      "type": "mcq2",
+      "concept": "Calibrating security depth in an interview",
+      "question": "During a system design interview for a standard consumer app, you reach the security aspects of your design. How should you handle them?",
+      "options": [
+        "Proactively go deep: token formats, cipher suites, and key-rotation schedules",
+        "Name where authentication, authorization, and encryption sit in the design, going deeper only if the interviewer probes or the product is security-critical"
+      ],
+      "answer": "Name where authentication, authorization, and encryption sit in the design, going deeper only if the interviewer probes or the product is security-critical — security is usually a demonstrate-awareness topic, and unprompted deep dives burn time the design needs elsewhere."
+    },
+    {
+      "id": "core-concepts-overview-34",
+      "type": "scenario",
+      "concept": "Capacity estimation at decision points, not upfront",
+      "question": "A candidate opens a system design interview with ten minutes of back-of-envelope math — QPS, storage, bandwidth — before drawing a single box, then later decides to shard the database without citing any numbers at all. What is the right way to use estimation in an interview?",
+      "answer": "Run the math at decision points, not as an upfront ritual: a quick calculation belongs exactly where it justifies a choice, such as showing write volume exceeds one database before proposing sharding. Upfront number dumps burn time nobody uses, while scaling choices made without numbers are unjustified."
+    }
+  ]
+}

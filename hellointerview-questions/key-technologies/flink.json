@@ -1,0 +1,286 @@
+{
+  "section": "key-technologies",
+  "subsection": "Flink",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/flink",
+  "concepts": [
+    "Validate the real-time requirement before choosing stream processing",
+    "Stateless pipelines don't need Flink; managed state is what justifies it",
+    "Crash recovery: snapshots avoid full-topic replays of in-memory state",
+    "Scaling stateful processing requires redistributing keyed state",
+    "Event time vs processing time",
+    "Watermarks as the completeness signal that lets windows fire",
+    "Watermark bound trade-off: latency vs completeness",
+    "Handling late events: allowed lateness and side outputs instead of drops",
+    "Tumbling windows for fixed non-overlapping buckets",
+    "Sliding windows for rolling views refreshed more often than the window length",
+    "Session windows defined by an inactivity gap",
+    "Global/count windows: firing driven by a custom trigger instead of time",
+    "keyBy routes all of a key's events to the one subtask owning its state",
+    "State TTL: bounding state growth to keep checkpoints healthy",
+    "JobManager vs TaskManager division of responsibilities",
+    "Task slots bound schedulable parallelism",
+    "Source parallelism is capped by the Kafka topic's partition count",
+    "State backend choice: heap vs RocksDB trade-off",
+    "Checkpoint barriers produce consistent snapshots without pausing",
+    "Checkpoints belong in durable shared storage, not worker-local disk",
+    "Recovery rewinds the source, so sources must be replayable",
+    "End-to-end exactly-once needs idempotent or transactional sinks",
+    "Checkpoint interval trade-off: overhead vs recovery time",
+    "Savepoints: operator-triggered snapshots for planned upgrades and rescaling",
+    "Backpressure propagates upstream instead of dropping data",
+    "Co-locate state with compute instead of per-event remote store calls",
+    "Fraud/pattern detection built from keyBy, keyed state, and timers",
+    "Dashboard pattern: windowed aggregates sunk to a fast serving store",
+    "When Flink fits in interviews: high-volume low-latency aggregation the DB can't do",
+    "Batch as a special case of streaming in Flink's model",
+    "Flink's per-event processing vs micro-batch latency floor",
+    "Flink vs Kafka Streams: standalone cluster engine vs embedded library",
+    "Job definition and submission: dataflow graph scheduled into slots"
+  ],
+  "question_count": 33,
+  "questions": [
+    {
+      "id": "flink-01",
+      "type": "scenario",
+      "concept": "Validate the real-time requirement before choosing stream processing",
+      "question": "An e-commerce company's finance team wants revenue-per-category numbers delivered every morning at 8am. An engineer proposes standing up a Flink cluster to compute the figures continuously off the order event stream. What should the team push back on, and why?",
+      "answer": "There is no real-time requirement — a nightly batch job over the order data is simpler and cheaper to build and operate. Stream processing is hard and expensive to get right, so it should be reserved for problems that genuinely need low-latency results."
+    },
+    {
+      "id": "flink-02",
+      "type": "scenario",
+      "concept": "Stateless pipelines don't need Flink; managed state is what justifies it",
+      "question": "A logistics company reads package-scan events from Kafka, attaches a warehouse name from a static lookup, and writes each row to Postgres. An architect suggests migrating this to Flink for its fault-tolerance guarantees. Is Flink warranted here, and why or why not?",
+      "answer": "No — every event is processed independently with no accumulated state, so a plain Kafka consumer already handles this well. Flink earns its operational complexity when you need managed state (windows, counts, pattern tracking), which is the part of streaming that is genuinely hard."
+    },
+    {
+      "id": "flink-03",
+      "type": "scenario",
+      "concept": "Crash recovery: snapshots avoid full-topic replays of in-memory state",
+      "question": "A gaming studio hand-rolled a Kafka consumer that keeps per-player score aggregates in memory for a live leaderboard. When the service crashes, they restart and replay the topic from the beginning to rebuild the aggregates, which now takes four hours. What is the underlying problem, and how does Flink address it?",
+      "answer": "In-memory state with no snapshots means every failure forces a replay of all history. Flink periodically checkpoints operator state to durable storage, so on failure it restores the last checkpoint and rewinds the source only to that point — recovery takes seconds to minutes instead of hours."
+    },
+    {
+      "id": "flink-04",
+      "type": "scenario",
+      "concept": "Scaling stateful processing requires redistributing keyed state",
+      "question": "A chat platform's home-grown stream processor tracks per-channel message rates. When traffic doubled they added consumer instances, but after the group rebalanced many channels' counters reset or double-counted, because the instance newly responsible for a channel had none of its history. What does this illustrate?",
+      "answer": "Scaling a stateful consumer means each key's state must move to whichever worker now owns that key — a failure-prone dance when hand-rolled. Flink manages keyed state itself and redistributes it correctly when parallelism changes, which is a core reason to use it over DIY consumers."
+    },
+    {
+      "id": "flink-05",
+      "type": "scenario",
+      "concept": "Event time vs processing time",
+      "question": "A fitness wearable app aggregates step counts per hour. Watches buffer data offline and sync when they reconnect, sometimes hours later. Reconnect bursts inflate the current hour's totals while the hours the steps actually happened stay undercounted. What should the team change?",
+      "answer": "They are aggregating on processing time (when events arrive) instead of event time (when the steps occurred). Switching the job to event-time semantics using the timestamps carried on the events puts late-synced data into the correct hourly windows."
+    },
+    {
+      "id": "flink-06",
+      "type": "scenario",
+      "concept": "Watermarks as the completeness signal that lets windows fire",
+      "question": "An industrial IoT platform computes 5-minute aggregates over sensor readings that arrive with variable network delay and out of order. An engineer asks: if events can always show up late, how can the job ever safely declare a 5-minute window finished? What Flink mechanism answers this?",
+      "answer": "Watermarks. A watermark with timestamp T is the job's assertion that no events earlier than T are still expected, so a window can fire once the watermark passes its end. It turns the fuzzy question of data completeness into an explicit, tunable signal flowing through the stream."
+    },
+    {
+      "id": "flink-07",
+      "type": "scenario",
+      "concept": "Watermark bound trade-off: latency vs completeness",
+      "question": "A ride-hailing company's demand heat map uses event-time windows with the watermark configured to tolerate 10 minutes of out-of-order arrival. Ops complains that every zone's numbers appear roughly 10 minutes after each window ends. What is the connection, and what trade-off is involved in fixing it?",
+      "answer": "Windows cannot fire until the watermark — which trails event time by the 10-minute bound — passes their end, so the tolerance directly becomes output delay. Tightening the bound cuts latency but causes more genuinely late events to miss their windows: you are trading completeness for freshness."
+    },
+    {
+      "id": "flink-08",
+      "type": "scenario",
+      "concept": "Handling late events: allowed lateness and side outputs instead of drops",
+      "question": "A fintech company bills customers on API-call counts computed in hourly event-time windows. Auditors find undercharges: events that arrived after the watermark had passed were silently discarded. Without hugely delaying results, how should the team handle these stragglers?",
+      "answer": "Stop dropping them silently — configure allowed lateness so windows accept stragglers and emit corrected results, and/or route late events to a side output for reconciliation. That keeps results timely while keeping billing complete."
+    },
+    {
+      "id": "flink-09",
+      "type": "scenario",
+      "concept": "Tumbling windows for fixed non-overlapping buckets",
+      "question": "A SaaS observability product shows API error counts for each discrete minute — 12:00 to 12:01, 12:01 to 12:02, and so on — with every event counted in exactly one bucket. Which window type fits, and what defines it?",
+      "answer": "Tumbling windows: fixed-size, back-to-back windows that never overlap, so each event lands in exactly one. It is the default choice for per-minute or per-hour style metrics."
+    },
+    {
+      "id": "flink-10",
+      "type": "scenario",
+      "concept": "Sliding windows for rolling views refreshed more often than the window length",
+      "question": "A music streaming service wants a 'hot right now' chart: play counts over the trailing 60 minutes, refreshed every 5 minutes. One window type covers this directly. Which one, and why?",
+      "answer": "A sliding window with size 60 minutes and slide 5 minutes. The windows overlap, so each play contributes to multiple windows, producing a rolling last-hour view that updates far more often than once per hour."
+    },
+    {
+      "id": "flink-11",
+      "type": "scenario",
+      "concept": "Session windows defined by an inactivity gap",
+      "question": "A travel booking site wants to analyze browsing visits, where a visit ends once a user goes quiet for 30 minutes and visits vary wildly in length. Their fixed-size windows keep chopping single visits into fragments. What should they use instead?",
+      "answer": "Session windows, which group a key's events by an inactivity gap rather than a fixed duration. The window closes only after 30 quiet minutes, so each variable-length visit becomes exactly one window."
+    },
+    {
+      "id": "flink-12",
+      "type": "scenario",
+      "concept": "Global/count windows: firing driven by a custom trigger instead of time",
+      "question": "A trading analytics platform wants to emit an updated per-symbol summary after every 100 trades of that symbol, however long those trades take to accumulate — liquid symbols would update every few seconds, thinly traded ones maybe once an hour. Time-based windows keep firing either too often or with nothing new. What windowing approach fits?",
+      "answer": "A global window per key with a count-based trigger (Flink's count windows are exactly this). A global window never closes on its own — the custom trigger you attach entirely determines when it fires, which is how you window by element count or other non-time conditions."
+    },
+    {
+      "id": "flink-13",
+      "type": "scenario",
+      "concept": "keyBy routes all of a key's events to the one subtask owning its state",
+      "question": "A news publisher's Flink job counts views per article, but per-article totals come out fragmented and wrong. Investigation shows each parallel subtask holds its own partial count for the same article, because events were spread round-robin across subtasks. What is missing from the job?",
+      "answer": "A keyBy on article ID. Keying the stream hashes each event's key so all events for an article reach the same subtask, which owns that key's state — without it no single instance holds the authoritative count."
+    },
+    {
+      "id": "flink-14",
+      "type": "scenario",
+      "concept": "State TTL: bounding state growth to keep checkpoints healthy",
+      "question": "A social feed's Flink job keeps a 'seen post IDs' set per user to dedupe events and never removes anything. Months later, checkpoints take many minutes and keep growing. What is the pitfall and the fix?",
+      "answer": "Unbounded keyed state — every user's set grows forever, and checkpoint size and duration grow with it. Attach a TTL (or explicit timer-based cleanup) so entries expire once they can no longer affect results."
+    },
+    {
+      "id": "flink-15",
+      "type": "mcq2",
+      "concept": "JobManager vs TaskManager division of responsibilities",
+      "question": "In a Flink cluster, which component decides where a job's parallel tasks run and coordinates the periodic checkpoints?",
+      "options": [
+        "The JobManager — the coordinator that schedules tasks onto workers and triggers and tracks checkpoints",
+        "The TaskManagers — each worker schedules its own tasks and snapshots its state on its own timer"
+      ],
+      "answer": "The JobManager — the coordinator that schedules tasks onto workers and triggers and tracks checkpoints — Flink is master/worker: TaskManagers execute tasks and hold state, while the JobManager orchestrates scheduling, checkpoint coordination, and recovery."
+    },
+    {
+      "id": "flink-16",
+      "type": "scenario",
+      "concept": "Task slots bound schedulable parallelism",
+      "question": "A video platform submits a Flink job with parallelism 16 to a cluster of two TaskManagers with four task slots each. The job sits pending and never fully starts. What is wrong?",
+      "answer": "The cluster only exposes 8 task slots, and each parallel subtask pipeline needs a slot — parallelism 16 cannot be scheduled onto 8 slots. Add TaskManagers or slots, or lower the job's parallelism."
+    },
+    {
+      "id": "flink-17",
+      "type": "scenario",
+      "concept": "Source parallelism is capped by the Kafka topic's partition count",
+      "question": "An ad platform's Flink job reads from a Kafka topic with 8 partitions. Ingestion is the bottleneck, so the team raises the job's parallelism from 8 to 32 — but read throughput does not move, and 24 of the source subtasks sit idle. Why?",
+      "answer": "A Kafka partition can be consumed by at most one source subtask, so effective source parallelism is capped at the topic's partition count — the extra 24 subtasks have no partitions to read. To ingest faster they must add partitions to the topic; extra Flink parallelism only helps operators downstream of the source."
+    },
+    {
+      "id": "flink-18",
+      "type": "scenario",
+      "concept": "State backend choice: heap vs RocksDB trade-off",
+      "question": "A telecom analytics job holds several hundred gigabytes of per-device keyed state. With the in-memory heap state backend, TaskManagers keep dying with out-of-memory errors. What should the team switch to, and what does it cost?",
+      "answer": "The RocksDB state backend, which keeps state on local disk so it can far exceed RAM. The price is that every state access pays serialization and deserialization, so per-record reads and writes are slower than the heap backend."
+    },
+    {
+      "id": "flink-19",
+      "type": "mcq2",
+      "concept": "Checkpoint barriers produce consistent snapshots without pausing",
+      "question": "How does Flink capture a consistent snapshot of a running job's distributed state without halting processing?",
+      "options": [
+        "It injects checkpoint barriers into the streams; as a barrier passes each operator, that operator snapshots its state, producing a globally consistent cut",
+        "It briefly pauses all operators cluster-wide, copies all state at once, then resumes processing"
+      ],
+      "answer": "It injects checkpoint barriers into the streams; as a barrier passes each operator, that operator snapshots its state, producing a globally consistent cut — this Chandy-Lamport-style technique keeps data flowing while aligning every operator's snapshot to the same point in the stream."
+    },
+    {
+      "id": "flink-20",
+      "type": "scenario",
+      "concept": "Checkpoints belong in durable shared storage, not worker-local disk",
+      "question": "A ticketing platform writes Flink checkpoints to each TaskManager's local disk to keep them fast. A host is lost to hardware failure, and the job cannot restore that machine's share of the state. What did they get wrong?",
+      "answer": "Checkpoints exist precisely to survive machine loss, so they must be written to durable storage independent of the workers, such as S3 or HDFS. Checkpoints kept only on a worker's local disk die with that worker."
+    },
+    {
+      "id": "flink-21",
+      "type": "scenario",
+      "concept": "Recovery rewinds the source, so sources must be replayable",
+      "question": "A CRM SaaS feeds Flink directly from partner webhooks pushed over HTTP, processed immediately with nothing retained. After a crash the job restores its checkpoint, but results are permanently missing the events from the minutes before the failure. Why, and what does Flink's recovery model require of a source?",
+      "answer": "Recovery is restore-then-rewind: Flink resets the source to the positions recorded in the checkpoint and re-reads from there. A push-only source retains nothing to re-read, so events between the checkpoint and the crash are simply gone — sources must be replayable, e.g., land the webhooks in Kafka and consume from there."
+    },
+    {
+      "id": "flink-22",
+      "type": "scenario",
+      "concept": "End-to-end exactly-once needs idempotent or transactional sinks",
+      "question": "A podcast analytics pipeline runs Flink with exactly-once checkpointing and increments play counts in Postgres from the job. After a TaskManager failure and recovery, several shows' counts exceed the true number of plays. How did this happen, and what is the fix?",
+      "answer": "Checkpointing makes Flink's internal state exactly-once, but recovery replays a span of input and the job re-emits writes for it — a blindly incrementing sink applies them twice. End-to-end exactly-once requires the sink to cooperate: idempotent writes (e.g., upsert the window's final total keyed by window) or a transactional two-phase-commit sink."
+    },
+    {
+      "id": "flink-23",
+      "type": "scenario",
+      "concept": "Checkpoint interval trade-off: overhead vs recovery time",
+      "question": "To minimize overhead, an e-learning platform sets its Flink job to checkpoint once per hour. The job is cheap in steady state, but a midday failure forces reprocessing of nearly an hour of events while dashboards go stale. What trade-off is being tuned here?",
+      "answer": "Checkpoint interval trades continuous overhead against recovery cost: frequent checkpoints tax throughput and IO but bound replay to a short span, while rare checkpoints are cheap in steady state but make each failure expensive. Pick an interval matched to how much reprocessing lag you can tolerate — typically seconds to a few minutes, not hours."
+    },
+    {
+      "id": "flink-24",
+      "type": "scenario",
+      "concept": "Savepoints: operator-triggered snapshots for planned upgrades and rescaling",
+      "question": "A payments company must deploy a new version of its Flink fraud job, which holds months of accumulated per-card state. Engineers fear a redeploy means either abandoning that state or replaying months of Kafka to rebuild it. What Flink feature handles this, and how does it differ from ordinary checkpoints?",
+      "answer": "Take a savepoint — a deliberately triggered, durable snapshot of the job's state — stop the job, and start the new version from that savepoint (which is also how you change a job's parallelism). Checkpoints are automatic, framework-owned snapshots for crash recovery; savepoints serve planned operations like upgrades, migrations, and rescaling."
+    },
+    {
+      "id": "flink-25",
+      "type": "scenario",
+      "concept": "Backpressure propagates upstream instead of dropping data",
+      "question": "A product analytics tool's Flink job enriches events and writes them to Elasticsearch. During an ES slowdown the whole pipeline's throughput drops and Kafka consumer lag climbs, yet no data is lost. What Flink behavior explains this?",
+      "answer": "Backpressure: when the sink cannot keep up its input buffers fill, and the slowdown propagates upstream operator by operator until the source itself reads more slowly. Flink throttles rather than sheds data, so the real fix is scaling or batching the slow sink."
+    },
+    {
+      "id": "flink-26",
+      "type": "scenario",
+      "concept": "Co-locate state with compute instead of per-event remote store calls",
+      "question": "A URL shortener's click-analytics Flink job calls a shared Redis on every event to read, increment, and write per-link counters. Throughput plateaus far below expectations and the Redis round trip dominates processing time. What design change does Flink push you toward?",
+      "answer": "Hold the counters in Flink's own keyed state, local to the operator, and only sink periodic results downstream. State co-located with compute replaces a network round trip per event with a local access, and checkpointing keeps that local state fault tolerant — a central lesson of Flink's design."
+    },
+    {
+      "id": "flink-27",
+      "type": "scenario",
+      "concept": "Fraud/pattern detection built from keyBy, keyed state, and timers",
+      "question": "A card issuer wants to flag 'card testing': several sub-dollar charges on one card followed by a large charge within ten minutes. Which Flink building blocks implement this detection, and how do they fit together?",
+      "answer": "keyBy(cardId) so all of a card's events reach one subtask; keyed state to remember the recent small-charge pattern; and event-time timers in a process function to enforce the ten-minute bound and clear state when it lapses. Keyed state plus timers is the canonical Flink setup for temporal pattern detection."
+    },
+    {
+      "id": "flink-28",
+      "type": "scenario",
+      "concept": "Dashboard pattern: windowed aggregates sunk to a fast serving store",
+      "question": "A food delivery company wants a live ops dashboard of orders per city over the last few minutes. Prototype one scanned raw Kafka events per page load and was hopeless; prototype two hit the OLTP database with GROUP BY and buckled under refresh traffic. What is the standard Flink-based shape for this?",
+      "answer": "A Flink job consumes the order stream, keys by city, aggregates in short tumbling windows, and sinks results into a fast store like Redis; the dashboard just reads the precomputed values. The aggregation happens once in the stream, not once per viewer per refresh."
+    },
+    {
+      "id": "flink-29",
+      "type": "scenario",
+      "concept": "When Flink fits in interviews: high-volume low-latency aggregation the DB can't do",
+      "question": "An ad-tech startup must show advertisers click counts per ad no more than a minute stale, at roughly 100k clicks per second. One camp wants to insert every click into the analytics database and aggregate with queries on demand; the other wants a streaming job. Which approach fits, and why?",
+      "answer": "Streaming aggregation with Flink: window clicks per ad in near real time and store only the aggregates. Inserting and repeatedly re-aggregating 100k rows per second on demand crushes the database and still lags the freshness target — high-volume, low-latency aggregation is exactly the problem shape Flink exists for."
+    },
+    {
+      "id": "flink-30",
+      "type": "true_false",
+      "concept": "Batch as a special case of streaming in Flink's model",
+      "question": "In Flink's model, a bounded dataset is just a stream that happens to end, so the same dataflow concepts cover both batch and streaming jobs.",
+      "answer": "True — Flink treats batch as a special case of streaming over finite input, which is why one engine and one programming model serve both instead of batch and streaming being separate systems."
+    },
+    {
+      "id": "flink-31",
+      "type": "mcq2",
+      "concept": "Flink's per-event processing vs micro-batch latency floor",
+      "question": "A gaming company needs cheat alerts within about one second of the triggering event. Choosing between Flink and classic Spark Streaming, which fits, and why?",
+      "options": [
+        "Flink — it processes events one at a time as they arrive, so per-event latency can be well under a second",
+        "Spark Streaming — it groups events into micro-batches, and each batch amortizes overhead for lower latency"
+      ],
+      "answer": "Flink — it processes events one at a time as they arrive, so per-event latency can be well under a second — micro-batching forces each event to wait for its batch to be assembled and scheduled, imposing a latency floor that true per-event streaming avoids."
+    },
+    {
+      "id": "flink-32",
+      "type": "scenario",
+      "concept": "Flink vs Kafka Streams: standalone cluster engine vs embedded library",
+      "question": "A five-person startup already runs Java services against Kafka and needs modest per-key stateful aggregation. They are weighing embedding Kafka Streams into an existing service against standing up a Flink cluster. What is the core operational difference between the two, and when does Flink earn its keep?",
+      "answer": "Kafka Streams is a library that runs inside your own application processes with no separate cluster to operate, while Flink is a standalone distributed engine with JobManager/TaskManager infrastructure you must deploy and run. Flink earns that cost when you need its heavier machinery — very large state, rich event-time and windowing features, connectors beyond Kafka — which a small team with modest needs may not."
+    },
+    {
+      "id": "flink-33",
+      "type": "true_false",
+      "concept": "Job definition and submission: dataflow graph scheduled into slots",
+      "question": "A Flink program defines a dataflow graph running from sources through operators to sinks; when submitted, the JobManager splits it into parallel subtasks and schedules them into TaskManager slots.",
+      "answer": "True — you author the graph (e.g., with the DataStream API), and the cluster's coordinator maps its parallel instances onto worker slots for execution; that authored-graph-to-scheduled-tasks flow is how every Flink job runs."
+    }
+  ]
+}

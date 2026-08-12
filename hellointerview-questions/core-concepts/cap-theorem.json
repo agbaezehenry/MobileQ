@@ -1,0 +1,298 @@
+{
+  "section": "core-concepts",
+  "subsection": "CAP Theorem",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/cap-theorem",
+  "concepts": [
+    "CAP theorem's two-of-three impossibility: consistency, availability, and partition tolerance cannot all be guaranteed at once",
+    "Meaning of consistency in CAP: every read on any node returns the most recent write (distinct from ACID consistency)",
+    "Meaning of availability in CAP: every request to a non-failing node gets a response, with no freshness guarantee",
+    "What a network partition actually is: live nodes that cannot exchange messages, not crashed nodes",
+    "Partition tolerance is mandatory in real distributed systems — 'choosing CA' is not a real option",
+    "The forced consistency-vs-availability choice applies only while a partition is in progress",
+    "CP behavior during a partition: refuse or error on requests rather than serve possibly-stale data",
+    "AP behavior during a partition: keep serving requests and accept temporarily stale data that converges later",
+    "Litmus test for choosing: would it be catastrophic if users briefly saw stale data?",
+    "Majority-quorum designs: during a partition the majority side keeps serving consistently and only the minority side loses availability",
+    "Booking/reservation of limited resources requires strong consistency (double-booking failure mode)",
+    "E-commerce inventory checkout requires strong consistency (overselling failure mode)",
+    "Financial/trading data requires strong consistency (stale prices cause monetary harm)",
+    "Social profile/feed data tolerates staleness — avoid over-engineering it with heavyweight coordination",
+    "Read-heavy content and review platforms should prefer availability over erroring on possibly-stale data",
+    "Interview default: eventual consistency unless the problem involves money, inventory, or booking limited resources",
+    "Raise the CAP decision early, during non-functional requirements, because it shapes the rest of the design",
+    "Distributed transactions / two-phase commit keep multiple nodes atomically in sync, at latency and availability cost",
+    "A single authoritative database sidesteps distributed consistency problems at modest scale",
+    "Strong consistency's inherent cost: cross-node coordination adds latency, especially across regions",
+    "Consistency-first technology choices: PostgreSQL/MySQL, Google Spanner, DynamoDB with strong reads",
+    "Availability-first pattern: asynchronous replication to read replicas, with replica lag as the accepted cost",
+    "Change data capture propagates primary-database changes asynchronously to downstream systems",
+    "Availability-first technology choices: Cassandra, default-mode DynamoDB, Redis clusters",
+    "The same technology can serve either side of CAP via configuration (DynamoDB eventual vs strongly consistent reads)",
+    "CAP stances are chosen per feature, not per system — one product can mix both",
+    "Transactional interactions (e.g. mutual matching) need consistency while content browsing stays available",
+    "Strong consistency is the most expensive consistency model, not the cheapest",
+    "Causal consistency: causally related events are observed in the same order by all users",
+    "Read-your-own-writes consistency: a user immediately sees their own updates even if others briefly lag",
+    "Eventual consistency: replicas converge over time once updates stop; acceptable for DNS-like data",
+    "Monotonic reads: a user's successive reads never move backward to an older state",
+    "PACELC extension: even without partitions, the trade-off becomes latency versus consistency"
+  ],
+  "question_count": 33,
+  "questions": [
+    {
+      "id": "cap-theorem-01",
+      "type": "scenario",
+      "concept": "CAP two-of-three impossibility",
+      "question": "A database vendor pitches your team a globally distributed store, claiming it simultaneously delivers strong consistency, 100% availability, and full tolerance of network partitions. Your architect is skeptical. What is wrong with the vendor's claim?",
+      "answer": "The CAP theorem makes this impossible to guarantee: once a network partition occurs, each node must either refuse requests (sacrificing availability) or answer with possibly-stale data (sacrificing consistency). No distributed system can promise strong consistency and full availability through arbitrary partitions."
+    },
+    {
+      "id": "cap-theorem-02",
+      "type": "mcq2",
+      "concept": "Meaning of consistency in CAP (vs ACID consistency)",
+      "question": "In the CAP theorem, what does the 'C' (consistency) refer to?",
+      "options": [
+        "Every read, on any node, returns the most recent successful write",
+        "Constraints and invariants like foreign keys are never violated, as in ACID"
+      ],
+      "answer": "Every read, on any node, returns the most recent successful write — CAP consistency is about all nodes agreeing on the latest data, a different notion from ACID's consistency."
+    },
+    {
+      "id": "cap-theorem-03",
+      "type": "true_false",
+      "concept": "Meaning of availability in CAP (no freshness guarantee)",
+      "question": "Under CAP, a system only counts as available if every response it returns contains the most recent data.",
+      "answer": "False — availability only requires that every request to a non-failing node receives some response; the data in that response is allowed to be stale."
+    },
+    {
+      "id": "cap-theorem-04",
+      "type": "mcq2",
+      "concept": "What a network partition actually is",
+      "question": "Which situation is a network partition in the CAP sense?",
+      "options": [
+        "Half the servers crash and stop responding entirely",
+        "All servers stay healthy, but messages between two groups of them are lost or delayed"
+      ],
+      "answer": "All servers stay healthy, but messages between two groups of them are lost or delayed — a partition is a communication break between live nodes, forcing each side to act without knowing the other's state."
+    },
+    {
+      "id": "cap-theorem-05",
+      "type": "scenario",
+      "concept": "Partition tolerance is mandatory — 'CA' is not a real option",
+      "question": "An architect's design doc for a multi-region order service reads: 'We will avoid the CAP trade-off entirely by choosing consistency and availability and dropping partition tolerance.' What is the flaw in this plan?",
+      "answer": "Partition tolerance is not something you opt out of: real networks will fail, so a multi-node system experiences partitions whether the doc acknowledges them or not. The only genuine decision is how to behave when a partition happens — favor consistency or favor availability."
+    },
+    {
+      "id": "cap-theorem-06",
+      "type": "true_false",
+      "concept": "The C-vs-A choice applies only during a partition",
+      "question": "A distributed system must give up either consistency or availability at every moment, even while the network between its nodes is healthy.",
+      "answer": "False — CAP forces the trade only while a partition is in progress; with a healthy network a system can serve up-to-date data and remain fully responsive at the same time."
+    },
+    {
+      "id": "cap-theorem-07",
+      "type": "scenario",
+      "concept": "CP behavior during a partition: refuse rather than serve stale data",
+      "question": "A bank runs its account service in two regions. During a network split between them, customers routed to the secondary region get errors when checking balances, while the primary region works normally. An on-call engineer files this as an availability bug. What is actually going on?",
+      "answer": "The system is deliberately making the CP choice: rather than risk showing a balance that might be stale, the partitioned side refuses to answer. For money, erroring during the partition is correct behavior, not a bug."
+    },
+    {
+      "id": "cap-theorem-08",
+      "type": "scenario",
+      "concept": "AP behavior during a partition: serve stale data, converge later",
+      "question": "During a brief network partition between data centers, a messaging app keeps working everywhere, but users notice that friends' 'last seen' times and profile photos are a few minutes out of date. Once the partition heals, everything catches up. Which CAP stance did the app take, and was it reasonable?",
+      "answer": "It chose availability: keep responding through the partition and accept temporarily stale data that converges afterward. For social presence data that is the right call — a stale timestamp is harmless, downtime is not."
+    },
+    {
+      "id": "cap-theorem-09",
+      "type": "scenario",
+      "concept": "Litmus test: would brief staleness be catastrophic?",
+      "question": "A B2B analytics-dashboard team has been deadlocked for a week over whether their new reporting service needs strong consistency. What single question should they ask to settle the debate, and what answer does it give here?",
+      "answer": "Ask whether it would be genuinely damaging for users to briefly see stale data. A slightly out-of-date chart on an analytics dashboard harms no one, so they should pick availability with eventual consistency and move on."
+    },
+    {
+      "id": "cap-theorem-10",
+      "type": "scenario",
+      "concept": "Majority quorums: only the minority side loses availability",
+      "question": "A distributed key-value store keeps five replicas of each record and requires acknowledgment from three nodes for every write and every read. A partition isolates two replicas from the other three. Reads and writes keep succeeding for clients who can reach the majority side, while clients stuck with the two-node side get errors. How does this design fit into the CAP trade-off?",
+      "answer": "It is a consistency-first (CP) design built on majority quorums: overlapping read and write quorums guarantee up-to-date data, so the three-node side keeps operating while the minority side must refuse rather than risk stale or divergent answers. CAP's availability sacrifice need not be total — it is paid only by the partition that cannot assemble a quorum."
+    },
+    {
+      "id": "cap-theorem-11",
+      "type": "scenario",
+      "concept": "Booking limited resources requires strong consistency",
+      "question": "A concert ticketing site replicated its seat map across regions for speed. During a network partition, two fans in different regions both purchased seat 12B for the same show, and both received confirmations. What went wrong?",
+      "answer": "Seat booking is a limited-resource transaction that demands strong consistency, but purchases were served from partitioned replicas that could not see each other's writes. The booking path must go through a strongly consistent store, even if that means rejecting some requests during partitions."
+    },
+    {
+      "id": "cap-theorem-12",
+      "type": "scenario",
+      "concept": "Inventory checkout requires strong consistency (overselling)",
+      "question": "An online shop runs a flash sale with one unit of a rare sneaker left. Stock reads come from asynchronously updated replicas, and during the rush 14 customers successfully checked out the last pair. What should the team change, and why?",
+      "answer": "The checkout's decrement-and-check must be strongly consistent — it should atomically read and update one authoritative count. Eventually consistent stock numbers are fine for browsing pages, but never for the moment of purchase."
+    },
+    {
+      "id": "cap-theorem-13",
+      "type": "scenario",
+      "concept": "Financial/trading data requires strong consistency",
+      "question": "A stock-trading app renders its order book from read replicas that can lag the primary by several seconds. Traders complain they placed orders against prices that no longer existed and got unexpected fills. Why is this design unacceptable in this domain?",
+      "answer": "Trading is a case where stale reads cause direct monetary harm, so price views and order placement need strong consistency. The extra latency and reduced availability of consistent reads is simply the price of correct trades."
+    },
+    {
+      "id": "cap-theorem-14",
+      "type": "scenario",
+      "concept": "Social profile data tolerates staleness — don't over-engineer",
+      "question": "An engineer proposes wrapping profile-photo updates on a social network in a two-phase commit across all regional replicas so everyone sees the new photo instantly. Upload latency would roughly triple. What should the team do instead?",
+      "answer": "Drop the 2PC — a profile photo lagging by seconds or minutes harms nobody, making this a textbook availability/eventual-consistency case. Expensive coordination should be reserved for data where staleness actually costs something."
+    },
+    {
+      "id": "cap-theorem-15",
+      "type": "scenario",
+      "concept": "Content/review platforms should prefer availability over erroring",
+      "question": "A restaurant-review platform configured its European region to return errors whenever cross-region replication lags, reasoning that showing possibly-outdated opening hours would mislead users. European users now regularly hit error pages. Which stance fits this product better, and why?",
+      "answer": "Availability. Briefly stale hours or reviews are a minor annoyance, while an unusable site drives users away — a read-heavy content platform should serve the old data and let replicas converge."
+    },
+    {
+      "id": "cap-theorem-16",
+      "type": "mcq2",
+      "concept": "Interview default: eventual consistency unless money/inventory/booking",
+      "question": "In a system design interview your design includes replication, and the interviewer asks how you will handle consistency. Which is the safer default answer?",
+      "options": [
+        "Eventual consistency everywhere, except strong consistency where the problem involves money, inventory, or booking limited resources",
+        "Strong consistency everywhere, since fresher data can never be the wrong choice"
+      ],
+      "answer": "Eventual consistency everywhere, except strong consistency where the problem involves money, inventory, or booking limited resources — blanket strong consistency buys needless latency and availability loss for flows that don't need it."
+    },
+    {
+      "id": "cap-theorem-17",
+      "type": "mcq2",
+      "concept": "Raise the CAP decision during non-functional requirements",
+      "question": "During a system design interview, when should you bring up the consistency-versus-availability decision?",
+      "options": [
+        "Early, while defining non-functional requirements, because it shapes the database and replication choices that follow",
+        "At the end, once the architecture is drawn, as a closing remark"
+      ],
+      "answer": "Early, while defining non-functional requirements, because it shapes the database and replication choices that follow — the CAP stance drives pattern and technology selection, so it belongs up front."
+    },
+    {
+      "id": "cap-theorem-18",
+      "type": "scenario",
+      "concept": "Distributed transactions / two-phase commit for cross-node atomicity",
+      "question": "A fintech's payment flow must debit a wallet balance in one database and append to a ledger in another, and a half-applied outcome is unacceptable. What mechanism keeps both stores in lockstep, and what does it cost?",
+      "answer": "A distributed transaction — classically two-phase commit — so both writes commit together or neither does. The cost is added latency and reduced availability, because the whole flow blocks whenever a participant cannot respond."
+    },
+    {
+      "id": "cap-theorem-19",
+      "type": "scenario",
+      "concept": "A single authoritative database sidesteps distributed consistency",
+      "question": "A clinic-appointment startup handling a few thousand bookings per day needs a strict no-double-booking guarantee. One engineer wants an active-active multi-region database; another suggests a single primary Postgres instance with backups. Which fits better, and why?",
+      "answer": "The single primary. At this scale one authoritative database gives strong consistency trivially — every booking hits the same node — and sidesteps distributed coordination entirely. Active-active multi-region would introduce exactly the consistency problem they are trying to prevent."
+    },
+    {
+      "id": "cap-theorem-20",
+      "type": "scenario",
+      "concept": "Strong consistency's inherent latency cost",
+      "question": "A B2B invoicing SaaS moved its database to synchronous cross-region replication so every read anywhere reflects the latest write. Since the switch, p99 write latency has jumped from about 20ms to about 300ms. Why is this expected rather than a bug?",
+      "answer": "Strong consistency across regions means each write must be confirmed by remote nodes before it is acknowledged, putting wide-area round trips directly in the write path. The latency increase is the built-in price of the consistency they opted into, not a defect."
+    },
+    {
+      "id": "cap-theorem-21",
+      "type": "mcq2",
+      "concept": "Technology choices for consistency-first designs",
+      "question": "Your design's core requirement is strongly consistent booking transactions. Which technology pairing matches that priority?",
+      "options": [
+        "PostgreSQL, or Google Spanner for multi-region scale",
+        "Cassandra, or a Redis cluster"
+      ],
+      "answer": "PostgreSQL, or Google Spanner for multi-region scale — traditional RDBMSs and Spanner are built for transactional strong consistency, while Cassandra and Redis clusters are tuned for availability."
+    },
+    {
+      "id": "cap-theorem-22",
+      "type": "scenario",
+      "concept": "Async replication to replicas as the availability-first pattern",
+      "question": "A gaming company replicates its leaderboard asynchronously to every region so the game keeps running even if a region's link drops. Players occasionally see scores a few seconds behind. A new hire files the lag as a defect. Is it one?",
+      "answer": "No — asynchronous replication is the availability-first pattern working as designed: writes are acknowledged locally and propagate in the background, so brief replica lag is inherent. For a leaderboard, seconds-old scores are an acceptable trade for staying up."
+    },
+    {
+      "id": "cap-theorem-23",
+      "type": "scenario",
+      "concept": "Change data capture for asynchronous propagation",
+      "question": "A marketplace needs its search index and cache to reflect catalog changes made in the primary database, but refuses to slow product writes with synchronous updates to those downstream systems. What pattern fits, and how does it work?",
+      "answer": "Change data capture: tail the primary database's change stream and push updates to the index and cache asynchronously. Writes stay fast and downstream systems converge moments later — an availability-oriented propagation pattern."
+    },
+    {
+      "id": "cap-theorem-24",
+      "type": "mcq2",
+      "concept": "Technology choices for availability-first designs",
+      "question": "You are picking a datastore for an always-on social feed where brief staleness is fine but downtime is not. Which option matches that priority?",
+      "options": [
+        "Cassandra, or DynamoDB in its default multi-AZ eventually consistent mode",
+        "A single-primary MySQL that requires synchronous commit confirmation before every acknowledgment"
+      ],
+      "answer": "Cassandra, or DynamoDB in its default multi-AZ eventually consistent mode — these stores are engineered to keep accepting reads and writes through node and network failures, at the cost of temporary staleness."
+    },
+    {
+      "id": "cap-theorem-25",
+      "type": "scenario",
+      "concept": "One technology can serve either CAP side via configuration (DynamoDB)",
+      "question": "An IoT fleet-management team needs strongly consistent reads for device-ownership records and rules out DynamoDB because 'it's an eventually consistent database.' Is that rejection justified?",
+      "answer": "No — DynamoDB is eventually consistent only by default; it also offers strongly consistent reads when you ask for them. The same product can sit on either side of the CAP trade depending on how it is configured."
+    },
+    {
+      "id": "cap-theorem-26",
+      "type": "scenario",
+      "concept": "CAP stances are chosen per feature, not per system",
+      "question": "A food-delivery platform's architect declares the entire system must be CP because order placement cannot tolerate inconsistency — which would make restaurant-menu browsing return errors during partitions. What is the better framing?",
+      "answer": "CAP choices are made per feature, not per system: keep order placement and payment strongly consistent while menus, ratings, and ETAs prioritize availability. A single product can and should mix both stances."
+    },
+    {
+      "id": "cap-theorem-27",
+      "type": "scenario",
+      "concept": "Transactional interactions need consistency while browsing stays available",
+      "question": "In a dating app, two users swipe right on each other within the same second, but only one of them sees the match screen; the other finds out much later. Meanwhile, profile photos being minutes stale bothers no one. Where exactly does this app need consistency?",
+      "answer": "In match creation: both swipes must resolve against the same consistent record so the mutual match appears to both users atomically. Profile browsing can stay eventually consistent — it is the transactional interaction, not the content viewing, that needs the guarantee."
+    },
+    {
+      "id": "cap-theorem-28",
+      "type": "true_false",
+      "concept": "Strong consistency is the most expensive consistency model",
+      "question": "Among the consistency models, strong consistency is the cheapest to operate because it removes all ambiguity from reads.",
+      "answer": "False — it is the most expensive: guaranteeing every read reflects the latest write forces coordination between nodes and adds latency, which is why it is reserved for cases like account balances that truly need it."
+    },
+    {
+      "id": "cap-theorem-29",
+      "type": "scenario",
+      "concept": "Causal consistency: related events seen in the same order",
+      "question": "On a discussion forum, some readers see a reply saying 'Totally agree with this' before the comment it responds to appears in their view. No data is lost — the ordering is just wrong for a while. Which consistency model addresses exactly this, and what does it guarantee?",
+      "answer": "Causal consistency: it guarantees that causally related events — a comment and its reply — are observed in the same order by every user, while unrelated events may still arrive in any order."
+    },
+    {
+      "id": "cap-theorem-30",
+      "type": "scenario",
+      "concept": "Read-your-own-writes consistency",
+      "question": "In a project-management tool, a user renames their workspace, sees the save confirmation, refreshes, and the old name is back; a minute later the new name finally sticks. Reads are served from lagging replicas. What guarantee should the team add for this flow?",
+      "answer": "Read-your-own-writes consistency: ensure a user's reads reflect at least their own recent updates, for example by pinning their post-write reads to the primary. Other users can briefly keep seeing the old name — it is the author's own view that must be immediate."
+    },
+    {
+      "id": "cap-theorem-31",
+      "type": "scenario",
+      "concept": "Eventual consistency: convergence over time",
+      "question": "An IoT platform pushes a config change to a registry replicated across regions; for a couple of minutes different devices fetch different versions, then all replicas agree and every device settles on the new config. Which consistency model is this, and why is it acceptable here?",
+      "answer": "Eventual consistency — replicas may briefly diverge but are guaranteed to converge once updates stop flowing. For config that tolerates minutes of skew, much like a DNS record change, the gain in availability and simplicity is worth the temporary divergence."
+    },
+    {
+      "id": "cap-theorem-32",
+      "type": "scenario",
+      "concept": "Monotonic reads: successive reads never go backward",
+      "question": "An online store's order-status page load-balances reads across replicas. A customer tracking their delivery sees the status reach 'Out for delivery', but on the next refresh it reverts to 'Preparing shipment', then later jumps forward again. Which consistency guarantee is missing here, and what does it promise?",
+      "answer": "Monotonic reads: once a user has observed a state, their later reads must never show an earlier one — time never appears to run backward. It is typically enforced by pinning a user's session to one replica, and note this is not read-your-own-writes, since the status was written by the fulfillment system, not the customer."
+    },
+    {
+      "id": "cap-theorem-33",
+      "type": "scenario",
+      "concept": "PACELC: latency vs consistency even without partitions",
+      "question": "A video-streaming platform's metadata store spans three regions, and its network essentially never partitions. The team still faces a hard choice: acknowledge writes only after all regions confirm (slow), or acknowledge locally and replicate in the background (possibly stale reads elsewhere). Which extension of CAP names this trade-off?",
+      "answer": "PACELC: during a partition you trade availability against consistency, but else — in normal operation — you trade latency against consistency. The synchronous-versus-async replication decision is that 'else' branch, which plain CAP does not cover."
+    }
+  ]
+}

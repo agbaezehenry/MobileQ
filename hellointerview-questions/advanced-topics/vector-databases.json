@@ -1,0 +1,330 @@
+{
+  "section": "advanced-topics",
+  "subsection": "Vector Databases",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/vector-databases",
+  "concepts": [
+    "Semantic search vs keyword search — embeddings match meaning, not tokens",
+    "Embedding model choice defines what 'similar' means",
+    "Multimodal models put text and images in one shared space, enabling cross-modal retrieval",
+    "Dimensionality drives cost linearly — bigger embeddings are not automatically better",
+    "Similarity metric must match the embedding model's training",
+    "On unit-normalized vectors, cosine and dot product rank identically",
+    "Exact kNN is a brute-force linear scan and does not scale",
+    "Curse of dimensionality defeats tree/spatial indexes",
+    "ANN misses are by design — recall is the quality metric, not a bug count",
+    "HNSW is the default index: layered graph, greedy search, best recall/latency, incremental inserts",
+    "HNSW graph links add fixed per-node RAM on top of the raw vectors",
+    "efSearch is the query-time recall knob — no rebuild required",
+    "HNSW build parameters (M, efConstruction) set the achievable recall ceiling and require a rebuild",
+    "IVF nprobe controls how many clusters are searched — the recall/latency knob",
+    "IVF centroids go stale under data drift and need periodic retraining",
+    "Index selection: IVF+PQ for huge memory-constrained batch-rebuilt corpora vs HNSW",
+    "LSH: sub-linear bucket hashing but lower recall — superseded by graph indexes",
+    "Annoy is a static build-once index — new data requires a full rebuild",
+    "Quantization trades recall for memory; over-fetch and rescore with full-precision vectors to win it back",
+    "Distributed vector serving: shard the corpus, scatter-gather and merge partial top-k results",
+    "Post-filtering returns fewer than k results under selective filters",
+    "Highly selective filters break ANN efficiency — brute-force the filtered subset instead",
+    "Hybrid search (BM25 + vector with rank fusion) rescues exact tokens like SKUs",
+    "Deletes are tombstones — indexes need periodic rebuild/compaction",
+    "Embedding generation belongs off the synchronous write path",
+    "Rule of thumb: below ~10M vectors, use a vector extension on your existing DB (pgvector)",
+    "Purpose-built distributed vector DBs are justified at 100M+ scale, high QPS, heavy filtering",
+    "An ANN library (FAISS) is only the index — a vector database adds persistence, CRUD, filtering, and replication",
+    "Capacity math: dims x 4 bytes per float32 vector, plus index and operational overhead",
+    "Latency numbers to know: tuned ANN answers in milliseconds at tens-of-millions scale",
+    "Changing embedding models requires re-embedding the entire corpus — mixed-model vectors are incomparable",
+    "The vector index is derived data — primary DB stays source of truth, synced via CDC",
+    "ANN is the wrong tool for exact-match lookups",
+    "RAG architecture: chunk, embed, retrieve top-k, ground the LLM",
+    "RAG chunking granularity: whole-document embeddings dilute meaning — retrieve passage-sized chunks",
+    "ANN always returns k neighbors even when nothing is relevant — enforce a similarity threshold",
+    "Image embeddings enable near-duplicate detection where file hashes fail",
+    "Recommendation retrieval: aggregate a user's item embeddings into a query vector, then run ANN",
+    "Two-stage retrieval: cheap ANN candidate generation, then heavyweight re-ranking",
+    "Interview framing: semantic search, recommendations, and dedup all reduce to the same nearest-neighbor primitive"
+  ],
+  "question_count": 40,
+  "questions": [
+    {
+      "id": "vector-databases-01",
+      "type": "scenario",
+      "concept": "Semantic search vs keyword search — embeddings match meaning, not tokens",
+      "question": "A home-goods e-commerce site gets complaints that searching \"warm coat for winter\" returns zero results, even though the catalog has dozens of insulated parkas — none of which contain the words \"warm\" or \"winter\" in their titles. The search stack is a standard inverted-index keyword engine. What capability is missing, and how does it work?",
+      "answer": "They need semantic (vector) search: an embedding model maps queries and product text into a shared vector space where meaning-similar text lands close together, so \"warm coat\" retrieves parkas despite zero token overlap. Keyword search can only match literal terms, which is exactly the failure here."
+    },
+    {
+      "id": "vector-databases-02",
+      "type": "scenario",
+      "concept": "Embedding model choice defines what 'similar' means",
+      "question": "A grocery-delivery app builds a \"frequently bought together\" widget by embedding product descriptions with a general-purpose text embedding model and retrieving nearest neighbors. The widget keeps recommending five nearly identical brands of ketchup next to ketchup, never hot dogs or buns. What is going wrong?",
+      "answer": "The embedding model defines the notion of similarity, and a generic text model encodes semantic sameness — so ketchup's neighbors are other ketchups. Complementary-purchase recommendations need embeddings trained on behavioral signals like co-purchase data, not description text."
+    },
+    {
+      "id": "vector-databases-03",
+      "type": "scenario",
+      "concept": "Multimodal models put text and images in one shared space, enabling cross-modal retrieval",
+      "question": "A stock-photo marketplace wants customers to type \"lonely astronaut on a red desert\" and get matching images. Its 40 million photos have only sparse, inconsistent human-written tags, and captioning them all is out of budget. What retrieval design solves this, and what property of the model makes it possible?",
+      "answer": "Embed every photo with a multimodal model such as CLIP, embed the typed query with that same model's text encoder, and run ANN over the image vectors. CLIP-style models are trained so images and their descriptions land in one shared vector space, which is what lets a text vector be compared directly against image vectors with no tags or captions involved."
+    },
+    {
+      "id": "vector-databases-04",
+      "type": "scenario",
+      "concept": "Dimensionality drives cost linearly — bigger embeddings are not automatically better",
+      "question": "A legal-tech startup indexing 200 million contract clauses chose 3072-dimensional embeddings \"to maximize quality.\" Their memory bill is enormous and query latency is disappointing, and an A/B test shows retrieval quality barely differs from a 768-dimensional model. What should the team change, and why?",
+      "answer": "Drop to the lower-dimensional embeddings: memory and per-comparison compute scale linearly with dimensions, so 3072 dims costs ~4x a 768-dim setup for marginal quality gain at their task. Dimension count is a cost knob, not a free quality upgrade."
+    },
+    {
+      "id": "vector-databases-05",
+      "type": "scenario",
+      "concept": "Similarity metric must match the embedding model's training",
+      "question": "A travel-booking site embeds hotel reviews with a model whose documentation says it was trained for cosine similarity. An engineer instead configures the index for raw Euclidean distance over unnormalized vectors. Relevance drops noticeably, and ranking now seems to track how long a review is rather than what it says. What is going wrong?",
+      "answer": "Metric mismatch: the model encodes similarity as the angle between vectors, but unnormalized L2 distance also folds in vector magnitude, which correlates with incidental properties like text length — so length leaks into the ranking. Use the metric the model was trained for, or normalize the vectors to unit length first (after which L2 and cosine rank identically)."
+    },
+    {
+      "id": "vector-databases-06",
+      "type": "scenario",
+      "concept": "On unit-normalized vectors, cosine and dot product rank identically",
+      "question": "An ad-tech team wants to switch their similarity computation from cosine to plain dot product because it skips two magnitude calculations per comparison. All their vectors are normalized to unit length at ingestion. The PM worries results will change. Will they, and why?",
+      "answer": "No — cosine similarity is the dot product divided by the two magnitudes, and on unit vectors both magnitudes are 1, so the scores and rankings are identical. The switch is a pure performance win here."
+    },
+    {
+      "id": "vector-databases-07",
+      "type": "scenario",
+      "concept": "Exact kNN is a brute-force linear scan and does not scale",
+      "question": "A news aggregator computes \"related articles\" by loading all 50 million article vectors and computing the distance from the query vector to every single one on each request. Queries take several seconds and CPU cost is climbing with the corpus. What is the fundamental problem?",
+      "answer": "They are doing exact brute-force kNN, which is O(n * d) per query — cost grows linearly with the corpus, so it can never be fast at 50M vectors. The fix is an approximate nearest neighbor index (e.g., HNSW), which answers in milliseconds by not comparing against everything."
+    },
+    {
+      "id": "vector-databases-08",
+      "type": "scenario",
+      "concept": "Curse of dimensionality defeats tree/spatial indexes",
+      "question": "An engineer at an IoT analytics company tries to speed up 768-dimensional similarity search by building a k-d tree over the vectors, reasoning that spatial trees make 2D geo-queries fast. Benchmarks show the tree performs no better than scanning everything. Why did this fail?",
+      "answer": "The curse of dimensionality: in hundreds of dimensions, tree partitioning can prune almost nothing, so k-d trees and similar exact spatial indexes degrade to near-linear scans. High-dimensional search requires approximate structures (graphs, clustering, hashing) that give up exactness for speed."
+    },
+    {
+      "id": "vector-databases-09",
+      "type": "scenario",
+      "concept": "ANN misses are by design — recall is the quality metric, not a bug count",
+      "question": "After a streaming service migrates from brute-force search to an ANN index, QA files a bug: for certain queries, a title known to be the closest match no longer appears in the top 10, though latency dropped from 2s to 8ms. Is this a bug, and what should the team do?",
+      "answer": "It is not a bug — ANN indexes intentionally trade a few percent of recall for orders-of-magnitude speedups, so occasionally missing a true neighbor is expected behavior. The team should measure recall against a brute-force baseline and tune search parameters until it meets their quality bar."
+    },
+    {
+      "id": "vector-databases-10",
+      "type": "scenario",
+      "concept": "HNSW is the default index: layered graph, greedy search, best recall/latency, incremental inserts",
+      "question": "A messaging platform is adding semantic search over messages. Requirements: high recall, low-millisecond latency, a continuous stream of new messages that must become searchable without batch rebuilds, and RAM is not a constraint. Which index family fits, and what makes it work?",
+      "answer": "HNSW: it builds a multi-layer navigable graph where queries greedily descend from a sparse top layer to dense lower layers, giving the best recall/latency trade-off available, and it accepts incremental inserts. It is the default choice when memory allows."
+    },
+    {
+      "id": "vector-databases-11",
+      "type": "scenario",
+      "concept": "HNSW graph links add fixed per-node RAM on top of the raw vectors",
+      "question": "An observability SaaS moves its trace-similarity index to HNSW. The raw 384-dimensional vectors total about 40GB, but the serving process settles at roughly 52GB resident, and an engineer opens a ticket for a suspected memory leak. What is the more likely explanation?",
+      "answer": "No leak — HNSW stores a neighbor list of up to M links per node per layer alongside every vector, and the whole structure has to sit in RAM to be fast. That overhead is a fixed number of bytes per vector, so it is a large relative surcharge for short vectors like these and a smaller one for 1536-dim vectors; either way, budget above raw vector size."
+    },
+    {
+      "id": "vector-databases-12",
+      "type": "scenario",
+      "concept": "efSearch is the query-time recall knob — no rebuild required",
+      "question": "A gaming platform's \"players like you\" feature runs on HNSW with 90% measured recall; the team wants 97%+ and can tolerate somewhat higher latency, but absolutely cannot afford to rebuild the index. What should they change?",
+      "answer": "Raise the query-time search breadth parameter (efSearch): it widens the candidate list explored per query, buying recall with latency and requiring no rebuild. Construction-time parameters like M would improve the graph but force a rebuild."
+    },
+    {
+      "id": "vector-databases-13",
+      "type": "scenario",
+      "concept": "HNSW build parameters (M, efConstruction) set the achievable recall ceiling and require a rebuild",
+      "question": "A biotech search team has pushed efSearch until query latency hits their 40ms budget, and recall has plateaued at 93% — below the 98% their scientists need. They do have a maintenance window and can rebuild the index offline. Which knobs come next, and what do they cost?",
+      "answer": "Rebuild with larger construction parameters: M (links kept per node) and efConstruction (candidates considered while inserting) produce a denser, better-connected graph, which raises the recall ceiling that efSearch is bumping against. The price is more RAM per vector for the extra links and substantially longer build time — and unlike efSearch, neither can be changed without reindexing."
+    },
+    {
+      "id": "vector-databases-14",
+      "type": "scenario",
+      "concept": "IVF nprobe controls how many clusters are searched — the recall/latency knob",
+      "question": "A fintech firm indexes compliance documents with IVF using 1024 clusters and probes only the single nearest cluster per query. Latency is superb but users report obviously relevant documents missing from results. What is the cheapest fix?",
+      "answer": "Increase nprobe so each query searches several nearby clusters instead of one: true neighbors often sit in adjacent clusters, especially for queries near cluster boundaries. It directly trades latency for recall with no reindexing."
+    },
+    {
+      "id": "vector-databases-15",
+      "type": "scenario",
+      "concept": "IVF centroids go stale under data drift and need periodic retraining",
+      "question": "A job board trained its IVF index on resumes from 2024. A year of hiring-trend shifts later — new job categories, new skill vocabulary — recall has slowly degraded even though nprobe was never changed. What is going wrong?",
+      "answer": "The k-means centroids were fit to the old data distribution; as new resumes drift away from those centroids, vectors land in poorly-fitting clusters and queries probe the wrong partitions. IVF needs periodic re-clustering/rebuilds as the corpus evolves."
+    },
+    {
+      "id": "vector-databases-16",
+      "type": "scenario",
+      "concept": "Index selection: IVF+PQ for huge memory-constrained batch-rebuilt corpora vs HNSW",
+      "question": "A stock-photo marketplace must index 500 million image vectors. Constraints: a hard memory budget far below what HNSW would need, the catalog is reindexed in a nightly batch anyway, and a small recall sacrifice is acceptable. Which indexing approach fits better, and why?",
+      "answer": "IVF, typically combined with product quantization (IVF-PQ): it has a far smaller memory footprint than HNSW and its main weaknesses — batch-oriented builds and slightly lower recall — are explicitly acceptable here. HNSW's advantages (top recall, incremental inserts) are exactly the things this team doesn't need."
+    },
+    {
+      "id": "vector-databases-17",
+      "type": "scenario",
+      "concept": "LSH: sub-linear bucket hashing but lower recall — superseded by graph indexes",
+      "question": "An email-security company inherits a near-duplicate phishing detector built years ago on locality-sensitive hashing. It's fast, but it misses too many variants that hash into different buckets. They want materially better recall at similar latency. What should they migrate to, and why?",
+      "answer": "Migrate to a graph index like HNSW: LSH's random-projection bucketing inherently drops neighbors that land in unprobed buckets, and modern graph indexes dominate it on the recall/latency frontier. That's why LSH is rarely the default in current vector databases."
+    },
+    {
+      "id": "vector-databases-18",
+      "type": "scenario",
+      "concept": "Annoy is a static build-once index — new data requires a full rebuild",
+      "question": "A podcast app uses Annoy for episode similarity. Creators complain that episodes uploaded during the day never show up in \"similar episodes\" until the next morning, when a scheduled job runs. Why is this happening?",
+      "answer": "Annoy builds a static forest of random-projection trees that is read-only once constructed — there are no incremental inserts, so new episodes are invisible until the nightly full rebuild. If same-day freshness matters, they need an index supporting live inserts, like HNSW."
+    },
+    {
+      "id": "vector-databases-19",
+      "type": "scenario",
+      "concept": "Quantization trades recall for memory; over-fetch and rescore with full-precision vectors to win it back",
+      "question": "A media-monitoring platform applies product quantization to its 300 million 1024-dimensional vectors, cutting memory from roughly 1.2TB of float32 down to well under 100GB so it finally fits in RAM. But measured recall drops from 96% to 88%, and buying more RAM is off the table. What can they do without giving up quantization?",
+      "answer": "Over-fetch and rescore: have the quantized index return a wide candidate set (say top-200 instead of top-10), then re-rank just those candidates against their full-precision vectors held on SSD. Quantization only has to be accurate enough to pull true neighbors into the candidate list, and exact distances on a short list recover most of the lost recall for a small, bounded cost."
+    },
+    {
+      "id": "vector-databases-20",
+      "type": "scenario",
+      "concept": "Distributed vector serving: shard the corpus, scatter-gather and merge partial top-k results",
+      "question": "A news platform's vector database spreads 1.2 billion article vectors across 40 nodes because no single machine can hold them. A new engineer is confused: if no node has the full index, how can any single \"top 10 related articles\" query possibly be answered correctly? How does the query actually execute?",
+      "answer": "Scatter-gather: the router fans the query out to every shard, each shard runs ANN over its local slice and returns its own top-k, and a coordinator merges the partial lists by score into the global top 10. Nearest neighbors have no partition key, so you cannot route a query to one shard the way you would with a user-id-sharded SQL database — the exception is when a filter like tenant or namespace already scopes the query to one partition."
+    },
+    {
+      "id": "vector-databases-21",
+      "type": "scenario",
+      "concept": "Post-filtering returns fewer than k results under selective filters",
+      "question": "A ticketing platform finds events by vibe (\"chill outdoor jazz\") using vector search for the top 10, then filters those 10 down to \"this weekend in Austin.\" Users in Austin often see only 1-2 results even though dozens of matching events exist. What is going wrong?",
+      "answer": "Classic post-filtering failure: the ANN search picks its top 10 from the whole corpus before the location/date filter runs, and the selective filter discards most of them. Fix by filtering during/before the vector search or by over-fetching (retrieve top-200, then filter down)."
+    },
+    {
+      "id": "vector-databases-22",
+      "type": "scenario",
+      "concept": "Highly selective filters break ANN efficiency — brute-force the filtered subset instead",
+      "question": "A multi-tenant B2B search product applies a tenant_id filter inside its ANN index. For its smallest tenants — each owning ~0.05% of the corpus — filtered queries are slower and lower-recall than for big tenants, which seems backwards to the team. What should they change?",
+      "answer": "When a filter matches a tiny slice of the corpus, ANN traversal falls apart — the graph walk keeps hitting excluded nodes. Below a selectivity threshold, just brute-force scan the tenant's own vectors: a few thousand exact comparisons is faster and gives perfect recall, and good engines switch strategies automatically."
+    },
+    {
+      "id": "vector-databases-23",
+      "type": "scenario",
+      "concept": "Hybrid search (BM25 + vector with rank fusion) rescues exact tokens like SKUs",
+      "question": "A hardware retailer replaced keyword search with pure vector search. Semantic queries improved, but contractors typing exact part numbers like \"BRK-4472\" now get visually similar but wrong breakers instead of the exact item. What should the team build, and why?",
+      "answer": "Hybrid search: run BM25/keyword retrieval and vector retrieval in parallel and merge the lists (e.g., reciprocal rank fusion). Embeddings blur rare exact tokens like part numbers — precisely the queries lexical search handles perfectly — so you need both signals."
+    },
+    {
+      "id": "vector-databases-24",
+      "type": "scenario",
+      "concept": "Deletes are tombstones — indexes need periodic rebuild/compaction",
+      "question": "A social feed app deletes millions of vectors as posts are removed, but the vector index's memory footprint never shrinks and query latency is slowly creeping up. The delete API returns success every time. What is going on?",
+      "answer": "Graph indexes handle deletes as soft tombstones — the nodes are marked dead but stay in the structure, still consuming memory and being traversed. Reclaiming space and speed requires periodic index rebuilds or compaction, which the team isn't running."
+    },
+    {
+      "id": "vector-databases-25",
+      "type": "scenario",
+      "concept": "Embedding generation belongs off the synchronous write path",
+      "question": "After a real-estate site added semantic listing search, the create-listing endpoint's p99 jumped from 120ms to over 2 seconds. Tracing shows the handler calls a hosted embedding API and writes to the vector index before responding to the agent. What should the team change?",
+      "answer": "Move embedding generation off the request path: enqueue the listing and let an async worker call the embedding model and update the index. Writes return fast, and the trade — a listing becomes searchable seconds later instead of instantly — is almost always acceptable."
+    },
+    {
+      "id": "vector-databases-26",
+      "type": "scenario",
+      "concept": "Rule of thumb: below ~10M vectors, use a vector extension on your existing DB (pgvector)",
+      "question": "A 6-person startup with 2 million product vectors and all data already in Postgres is debating deploying a managed dedicated vector database cluster \"to do it properly.\" What is the pragmatic recommendation, and why?",
+      "answer": "Use pgvector inside the Postgres they already run: at 2M vectors (far below the ~10M rough threshold), an extension delivers fine performance while avoiding new infrastructure, a second system to operate, and a data-sync problem. Reach for purpose-built vector DBs only when scale or QPS demands it."
+    },
+    {
+      "id": "vector-databases-27",
+      "type": "scenario",
+      "concept": "Purpose-built distributed vector DBs are justified at 100M+ scale, high QPS, heavy filtering",
+      "question": "A video platform's recommendation retrieval has grown to 800 million vectors, 30k queries per second, and rich metadata filters on every query. Their single-node pgvector instance is saturated despite aggressive tuning. What kind of move is justified now, and what does it buy them?",
+      "answer": "This is the profile where a purpose-built distributed vector database (Milvus, Pinecone, Qdrant, etc.) earns its complexity: sharding and replication across nodes, high-QPS serving, and filter-aware ANN at scale. The earlier \"just use your existing DB\" rule stops applying past roughly the 100M-vector / high-throughput mark."
+    },
+    {
+      "id": "vector-databases-28",
+      "type": "scenario",
+      "concept": "An ANN library (FAISS) is only the index — a vector database adds persistence, CRUD, filtering, and replication",
+      "question": "A team prototypes similarity search with FAISS inside a single Python process, loading vectors from a file at startup, and it works beautifully. Productionizing it, they discover they need per-user metadata filters, live inserts and deletes, durability across restarts, and several replicas behind a load balancer. What is the gap they've hit?",
+      "answer": "FAISS is an ANN index library, not a database — it gives you the search structure and nothing else: no durable storage, no CRUD or metadata filtering, no replication, sharding, backups, or network API. Those operational layers are exactly what a vector database or a vector extension wraps around the same algorithms, so they either adopt one or build that layer themselves."
+    },
+    {
+      "id": "vector-databases-29",
+      "type": "scenario",
+      "concept": "Capacity math: dims x 4 bytes per float32 vector, plus index and operational overhead",
+      "question": "During capacity planning, a knowledge-base team must size memory for 10 million documents embedded at 1536 dimensions in float32, served from an HNSW index. Roughly how much RAM should they budget, and how is that derived?",
+      "answer": "Raw vectors are 1536 x 4 bytes = ~6KB each, so 10M x 6KB = ~60GB. Add roughly 20-50% on top for HNSW's neighbor lists, ids, stored metadata, and rebuild headroom — budget on the order of 75-90GB. Dimensions x 4 bytes x vector count is the back-of-envelope every interview expects."
+    },
+    {
+      "id": "vector-databases-30",
+      "type": "true_false",
+      "concept": "Latency numbers to know: tuned ANN answers in milliseconds at tens-of-millions scale",
+      "question": "A properly tuned in-memory ANN index such as HNSW can typically answer a similarity query over tens of millions of vectors in single-digit to low-tens-of-milliseconds.",
+      "answer": "True — because ANN visits only a tiny, well-chosen fraction of the corpus, millisecond-scale queries at that size are the norm; it's brute-force scanning that takes hundreds of milliseconds to seconds at the same scale."
+    },
+    {
+      "id": "vector-databases-31",
+      "type": "scenario",
+      "concept": "Changing embedding models requires re-embedding the entire corpus — mixed-model vectors are incomparable",
+      "question": "A ride-hailing company's support team upgrades to a newer embedding model and points the query path at it immediately, while the stored knowledge-base vectors were produced by the old model. Search results instantly become near-random garbage. What happened, and what does a correct migration look like?",
+      "answer": "Vectors from different embedding models live in unrelated spaces — comparing a v2 query vector against v1 document vectors is meaningless, even at matching dimensions. A correct migration re-embeds the entire corpus with the new model into a new index and cuts queries over atomically (blue/green), keeping query and document models in lockstep."
+    },
+    {
+      "id": "vector-databases-32",
+      "type": "scenario",
+      "concept": "The vector index is derived data — primary DB stays source of truth, synced via CDC",
+      "question": "A marketplace dual-writes product data to Postgres and a vector database from application code. Months later, users report that products deleted from the catalog still appear in semantic search, and some new products never appear. What should the team change architecturally?",
+      "answer": "Stop treating the vector DB as a co-equal store: keep Postgres as the source of truth and feed the vector index from it via CDC or an outbox/queue, so every insert, update, and delete propagates reliably. The index should be derived, rebuildable data — dual-writes from app code will always drift."
+    },
+    {
+      "id": "vector-databases-33",
+      "type": "scenario",
+      "concept": "ANN is the wrong tool for exact-match lookups",
+      "question": "Enthused by their new vector stack, a banking app's team routes all lookups through it — including retrieving a customer by their exact account number. Occasionally the wrong customer record comes back. Why is this the wrong design?",
+      "answer": "ANN is approximate by construction — it can and will occasionally return a near neighbor instead of the exact item, which is catastrophic when correctness is binary. Exact-key lookups belong in a traditional index (hash/B-tree); vector search is only for fuzzy, similarity-shaped queries."
+    },
+    {
+      "id": "vector-databases-34",
+      "type": "scenario",
+      "concept": "RAG architecture: chunk, embed, retrieve top-k, ground the LLM",
+      "question": "A company's internal chatbot confidently invents HR policies because the LLM has never seen the private wiki. The team wants answers grounded in the actual documents without retraining the model. What architecture should they build, end to end?",
+      "answer": "Retrieval-augmented generation: split the wiki into chunks, embed each chunk, and store vectors in a vector DB; at question time, embed the query, retrieve the top-k most similar chunks, and inject them into the LLM prompt as context. The model answers from retrieved facts instead of guessing."
+    },
+    {
+      "id": "vector-databases-35",
+      "type": "scenario",
+      "concept": "RAG chunking granularity: whole-document embeddings dilute meaning — retrieve passage-sized chunks",
+      "question": "A support team's RAG bot embeds each entire 30-page product manual as one vector. Retrieval usually surfaces the right manual, but answers stay vague and the LLM's context window is stuffed with dozens of irrelevant pages per question. What is the design flaw?",
+      "answer": "Chunking granularity: a whole-document embedding averages many unrelated topics into one diluted vector and forces the entire manual into the prompt. Split documents into passage-sized chunks (a few hundred tokens, often overlapping) so retrieval pinpoints just the relevant passages — while noting that chunks too small lose surrounding context, making chunk size a tuning trade-off."
+    },
+    {
+      "id": "vector-databases-36",
+      "type": "scenario",
+      "concept": "ANN always returns k neighbors even when nothing is relevant — enforce a similarity threshold",
+      "question": "An insurance company's RAG assistant always retrieves the top 5 help-center chunks and hands them to the LLM. When a customer asks something the documentation never covers — \"do you insure pet grooming vans?\" — the bot confidently fabricates an answer from unrelated billing and claims pages. What is the retrieval-layer fix?",
+      "answer": "Vector search always returns k neighbors regardless of whether anything is actually similar; there is no built-in concept of \"no match.\" Enforce a minimum similarity score, drop chunks that fall below it, and when nothing clears the bar pass no context so the model can say it doesn't know or hand off to a human."
+    },
+    {
+      "id": "vector-databases-37",
+      "type": "scenario",
+      "concept": "Image embeddings enable near-duplicate detection where file hashes fail",
+      "question": "A photo-sharing app bans an image, but users re-upload it slightly cropped, resized, or re-compressed, and the MD5-hash blocklist catches none of the variants. What approach actually solves this, and why does hashing fail?",
+      "answer": "Embed images with a vision model (CLIP-style) and check uploads against banned-image vectors via similarity search — visually near-identical images land close in embedding space regardless of crops or compression. Cryptographic hashes flip completely on a single changed pixel, so they only ever catch byte-exact copies."
+    },
+    {
+      "id": "vector-databases-38",
+      "type": "scenario",
+      "concept": "Recommendation retrieval: aggregate a user's item embeddings into a query vector, then run ANN",
+      "question": "A short-video app wants a personalized \"for you\" rail that must be assembled in under 50ms. It already has an embedding for every one of its 30 million videos, but nothing that represents a user. How does it generate candidates for a specific viewer?",
+      "answer": "Build a user vector on the fly by aggregating the embeddings of the items they engaged with — typically a recency- and engagement-weighted average of recently watched videos — and use that as the ANN query against the video index. Because users and items then live in the same space, \"more of what you like\" becomes an ordinary nearest-neighbor lookup that returns in milliseconds."
+    },
+    {
+      "id": "vector-databases-39",
+      "type": "scenario",
+      "concept": "Two-stage retrieval: cheap ANN candidate generation, then heavyweight re-ranking",
+      "question": "A music-streaming team has a highly accurate but slow neural model that scores how well a track fits a listener — about 10ms per track, against a 50-million-track catalog. They want its quality in a real-time recommendation row. How should they architect this?",
+      "answer": "Two stages: use fast ANN vector search to pull a few hundred candidate tracks in milliseconds, then run the expensive model only on that short list to re-rank it. Cheap-retrieve-then-precise-rerank is the standard pattern for putting slow, high-quality models behind real-time latency budgets."
+    },
+    {
+      "id": "vector-databases-40",
+      "type": "scenario",
+      "concept": "Interview framing: semantic search, recommendations, and dedup all reduce to the same nearest-neighbor primitive",
+      "question": "In a system design interview for a marketplace, the interviewer asks for three features: \"search listings by meaning, not just keywords,\" \"show similar listings on each listing page,\" and \"catch re-uploads of banned photos.\" A candidate starts designing three unrelated subsystems. What insight is the candidate missing?",
+      "answer": "All three are the same problem — nearest-neighbor search over embeddings — differing only in what gets embedded (query text, listing content, images), so one vector-search system serves all of them. Recognizing that semantic search, recommendations, RAG, and duplicate detection are all vector-search-shaped, then defending the simplest sufficient deployment, is exactly what the interview rewards."
+    }
+  ]
+}

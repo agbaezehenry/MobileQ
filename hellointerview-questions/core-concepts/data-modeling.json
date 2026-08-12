@@ -1,0 +1,318 @@
+{
+  "section": "core-concepts",
+  "subsection": "Data Modeling",
+  "source_url": "https://www.hellointerview.com/learn/system-design/core-concepts/data-modeling",
+  "concepts": [
+    "Interview bar: good-enough schema over full normalization exercise",
+    "Identify core entities during requirements gathering, before schema design",
+    "Default to relational/SQL unless requirements clearly demand otherwise",
+    "SQL scales through architecture (replicas, sharding, caching), not by being abandoned",
+    "ACID transactions for correctness-critical multi-step operations",
+    "Document database fit: deeply nested data read as a single unit",
+    "Document database fit: same-type records with wildly different structures",
+    "Document embedding trade-off: duplicated data makes updates painful and inconsistent",
+    "'Evolving schema' is rarely a valid database-choice justification in interviews",
+    "Key-value store fit: exact-key lookups like sessions, caching, feature flags",
+    "SQL as source of truth with a key-value cache in front",
+    "Key-value modeling duplicates data under multiple keys, one per access pattern",
+    "Wide-column database fit: massive write-heavy, append-only, time-series workloads",
+    "Graph databases are rarely justified; SQL handles most relationship data",
+    "Data volume drives physical separation of stores and schemas",
+    "Access patterns are the primary schema driver — schema follows queries",
+    "Consistency requirements differ per data type: strong for money, eventual for activity feeds",
+    "Justify schema decisions aloud by tying them to requirement factors",
+    "System-generated surrogate primary keys instead of natural business keys",
+    "Foreign keys enforce referential integrity and prevent orphaned records",
+    "Dropping FK enforcement at extreme scale in favor of application-level integrity",
+    "One-to-many relationships put the foreign key on the many side",
+    "Many-to-many relationships require a junction table",
+    "One-to-one relationships are rare and usually signal tables should merge",
+    "Database-level constraints protect data quality at the cost of write overhead",
+    "Choose indexes to directly serve the most important queries/API endpoints",
+    "Composite indexes for combined filter-plus-sort access patterns",
+    "Normalization stores each fact once and prevents update anomalies",
+    "Deliberate denormalization requires every write path to maintain the duplicated copies",
+    "Start normalized; denormalize only when a demonstrated read pattern requires it",
+    "Point-in-time snapshots (orders, audit logs) are legitimate denormalization",
+    "Analytics and read-optimized systems are legitimate denormalization exceptions",
+    "Serve denormalized views from a cache instead of denormalizing the schema",
+    "Choose the shard key from the primary access pattern to co-locate related data",
+    "Time-range sharding creates a hot shard in write-heavy systems",
+    "Frequent cross-shard queries are the symptom of a shard key mismatched to the read pattern",
+    "Shard keys are effectively permanent decisions",
+    "Interview execution order for presenting the data model"
+  ],
+  "question_count": 38,
+  "questions": [
+    {
+      "id": "data-modeling-01",
+      "type": "scenario",
+      "concept": "Interview bar: good-enough schema over full normalization exercise",
+      "question": "In a mock system design interview for a food-delivery app, a candidate spends 18 of their 35 minutes producing a meticulous entity-relationship diagram: every table in third normal form, every column typed, every constraint labeled. The schema is technically flawless, but the interviewer cuts them off before they discuss scaling or caching. What did the candidate get wrong?",
+      "answer": "The bar for data modeling in an interview is a clear, functional schema aligned with requirements — not a complete normalization exercise. A good-enough model exists to enable the rest of the design discussion, and over-polishing it stole the time that discussion needed."
+    },
+    {
+      "id": "data-modeling-02",
+      "type": "scenario",
+      "concept": "Identify core entities during requirements gathering, before schema design",
+      "question": "Asked to design a Ticketmaster-style booking system, a candidate races straight from functional requirements into drawing services and message queues. Ten minutes in, the interviewer interrupts: 'Wait — what are the main things this system actually stores?' The candidate has to backtrack awkwardly. Where in the interview should that question have been answered?",
+      "answer": "During requirements gathering, before any design work: data modeling shows up twice in the interview, first as naming the core entities (events, venues, tickets, bookings) up front, and only later as sketching the actual schema when the database is introduced. Naming entities early anchors the API and design discussion that follows."
+    },
+    {
+      "id": "data-modeling-03",
+      "type": "scenario",
+      "concept": "Default to relational/SQL unless requirements clearly demand otherwise",
+      "question": "Two co-founders are designing the backend for an event-ticketing platform: users, events, venues, orders, and refunds, with obvious relationships between them and no unusual scale requirements yet. One insists they should launch on a trendy NoSQL store 'to be modern.' Which choice fits, and why?",
+      "answer": "PostgreSQL or another relational database. The domain is ordinary related entities with consistency needs — exactly what SQL is built for — and you should only deviate from the relational default when a specific requirement clearly demands it, not for novelty."
+    },
+    {
+      "id": "data-modeling-04",
+      "type": "scenario",
+      "concept": "SQL scales through architecture (replicas, sharding, caching), not by being abandoned",
+      "question": "An engineer at a growing social app argues the team must migrate off Postgres immediately because they're projected to hit 30 million users, and 'relational databases don't scale.' The current database is handling load fine. How should a teammate push back?",
+      "answer": "That's a misconception — companies like Facebook and Airbnb run enormous systems on relational foundations. Scale comes from the architecture around the database (read replicas, sharding, caching, connection pooling), not from swapping the database category."
+    },
+    {
+      "id": "data-modeling-05",
+      "type": "scenario",
+      "concept": "ACID transactions for correctness-critical multi-step operations",
+      "question": "A digital-wallet startup built peer-to-peer transfers on a simple store with no transaction support: the code decrements the sender's balance, then increments the receiver's. After a server crash mid-transfer, a user's money is debited but never credited anywhere. What is the fundamental fix?",
+      "answer": "The transfer must be atomic: both balance changes commit together or not at all. That means running it inside an ACID transaction on a database that supports them — the canonical reason financial operations belong on a transactional relational store."
+    },
+    {
+      "id": "data-modeling-06",
+      "type": "scenario",
+      "concept": "Document database fit: deeply nested data read as a single unit",
+      "question": "A recipe platform stores each recipe as a deep tree — sections, steps, per-step ingredient variants, and equipment notes — and the app always loads the entire recipe at once. In their relational schema, rendering one recipe page requires joining six tables. Which alternative model fits this shape of data, and why?",
+      "answer": "A document database, embedding the whole recipe tree in one document. When deeply nested data is always read as a unit, embedding eliminates the join fan-out and makes each read a single document fetch."
+    },
+    {
+      "id": "data-modeling-07",
+      "type": "scenario",
+      "concept": "Document database fit: same-type records with wildly different structures",
+      "question": "A marketplace's product catalog spans laptops (CPU, RAM, screen size), sneakers (size, colorway, material), and groceries (weight, expiry date, allergens). Their single SQL products table has grown to 60 columns, most of them NULL for any given row, and every new category adds more. What database model fits this data, and what is the telltale signal?",
+      "answer": "A document database, where each product is a document carrying only its own attributes. Records of the same logical type having vastly different structures is one of the genuine triggers for the document model — a sparse, ever-widening SQL table is the symptom."
+    },
+    {
+      "id": "data-modeling-08",
+      "type": "scenario",
+      "concept": "Document embedding trade-off: duplicated data makes updates painful and inconsistent",
+      "question": "An e-commerce marketplace on MongoDB embeds the seller's store name inside every product document so listing pages render without lookups. A popular seller rebrands, and the migration script that rewrites their 40,000 product documents times out halfway, leaving search results showing two different store names. What trade-off did the team walk into?",
+      "answer": "Embedding duplicates the seller's name across every product, so reads are fast but a single logical update must touch thousands of documents. That update cost and the window of inconsistency are the price of document-style denormalization."
+    },
+    {
+      "id": "data-modeling-09",
+      "type": "true_false",
+      "concept": "'Evolving schema' is rarely a valid database-choice justification in interviews",
+      "question": "In a system design interview, saying 'our schema might evolve over time' is usually a strong justification for choosing a document database over SQL.",
+      "answer": "False — interview problems have deliberately narrow, scoped functional requirements, so genuinely evolving schemas almost never materialize. Leaning on schema flexibility usually signals reaching for a non-default database without a real reason."
+    },
+    {
+      "id": "data-modeling-10",
+      "type": "scenario",
+      "concept": "Key-value store fit: exact-key lookups like sessions, caching, feature flags",
+      "question": "A B2B SaaS product validates a session token on every API request: given the token string, fetch the session record. It's millions of lookups per second, always by exact token, never any filtering or joining. What storage choice matches this workload?",
+      "answer": "A key-value store like Redis. The access pattern is a pure exact-key lookup at high volume — precisely what key-value stores are built for — and the lack of any richer query need means SQL's capabilities would be wasted overhead."
+    },
+    {
+      "id": "data-modeling-11",
+      "type": "scenario",
+      "concept": "SQL as source of truth with a key-value cache in front",
+      "question": "A news site's article pages are buckling under read traffic, and an engineer proposes migrating the entire content database from Postgres into Redis 'since Redis is faster.' What should the team do instead, and why?",
+      "answer": "Keep Postgres as the durable source of truth and put Redis in front as a cache for hot articles. Using both together is the standard pattern: you get fast reads for hot data without giving up durability and rich queries — a wholesale migration trades those away for nothing."
+    },
+    {
+      "id": "data-modeling-12",
+      "type": "scenario",
+      "concept": "Key-value modeling duplicates data under multiple keys, one per access pattern",
+      "question": "A gaming platform stores player profiles in a key-value store keyed by player_id, but the login flow needs to look players up by email — and there are no joins or secondary queries available. A new hire suggests scanning the whole keyspace on each login. What is the idiomatic key-value modeling approach instead?",
+      "answer": "Write the data under a second key: maintain an email-to-player mapping (or a duplicate record keyed by email) alongside the player_id record. In key-value stores you denormalize across keys, keeping one entry per access pattern, because there is no join or secondary query to fall back on."
+    },
+    {
+      "id": "data-modeling-13",
+      "type": "scenario",
+      "concept": "Wide-column database fit: massive write-heavy, append-only, time-series workloads",
+      "question": "An IoT fleet platform ingests two million sensor readings per second — pure appends, never updated — and dashboards query them by device and time range. Their Postgres instance can't keep up with the write volume even after tuning. What class of database is purpose-built for this, and what makes it fit?",
+      "answer": "A wide-column store like Cassandra. These are designed for enormous append-heavy write throughput and time-series access, modeling data around device-plus-time query patterns — exactly this telemetry workload's shape."
+    },
+    {
+      "id": "data-modeling-14",
+      "type": "scenario",
+      "concept": "Graph databases are rarely justified; SQL handles most relationship data",
+      "question": "Designing a Twitter-style product in an interview, a candidate announces they'll use Neo4j 'because followers form a social graph.' The functional requirements are following users, posting, and viewing a feed. Why is this choice likely to hurt them?",
+      "answer": "Having relationships in the domain doesn't require a graph database — a follows junction table in SQL handles this pattern at far lower operational complexity. Even graph-heavy companies like Facebook and LinkedIn built their core relationship data on relational stores, so the exotic pick reads as showing off, not reasoning."
+    },
+    {
+      "id": "data-modeling-15",
+      "type": "scenario",
+      "concept": "Data volume drives physical separation of stores and schemas",
+      "question": "A video-streaming service is designing its schema: a few million rows of video metadata, plus a projected petabyte-scale firehose of per-second view events. The team sketches both into one Postgres schema on one database. What requirement did they skip, and what should it have told them?",
+      "answer": "They never sized the data. Volume estimates should come before schema design, and here they'd show the event firehose can't live beside the modest metadata — the two belong in physically separate stores with schemas that reference each other, not one shared database."
+    },
+    {
+      "id": "data-modeling-16",
+      "type": "scenario",
+      "concept": "Access patterns are the primary schema driver — schema follows queries",
+      "question": "A team building a project-management SaaS designs their 'ideal' schema in isolation, then defines the API afterward. The dashboard endpoint turns out to need a five-way join across tables that were organized by conceptual purity, and it's unusably slow. What should they have done differently from the start?",
+      "answer": "Enumerate the access patterns first — what queries each endpoint actually needs — and design the schema to serve them. Schema follows queries, not the reverse; a structure designed without knowing its reads is designed blind."
+    },
+    {
+      "id": "data-modeling-17",
+      "type": "scenario",
+      "concept": "Consistency requirements differ per data type: strong for money, eventual for activity feeds",
+      "question": "A ride-hailing platform routes everything — driver payout balances and the 'your recent trips' activity feed — through one strongly consistent transactional store, and the feed's write volume is now throttling payment processing. How should they split their consistency requirements?",
+      "answer": "Match consistency to the data: payouts are financial and need strong ACID consistency, but a trips feed tolerates eventual consistency and can move to a separate, loosely coupled system. Applying the strictest guarantee to everything wastes the headroom the feed never needed."
+    },
+    {
+      "id": "data-modeling-18",
+      "type": "scenario",
+      "concept": "Justify schema decisions aloud by tying them to requirement factors",
+      "question": "Two candidates designing a social feed both denormalize a like_count column onto the posts table. The first just announces the change and moves on. The second explains that feeds must load quickly and like counts can lag by a few seconds, so the read win is worth the consistency cost. Why does the second candidate score better with an identical schema?",
+      "answer": "Because they explicitly tied the decision to the system's requirements — read latency and an eventual-consistency tolerance — which demonstrates reasoning rather than a memorized pattern. In interviews, the justification connecting a schema choice to volume, access-pattern, and consistency requirements matters as much as the choice itself."
+    },
+    {
+      "id": "data-modeling-19",
+      "type": "scenario",
+      "concept": "System-generated surrogate primary keys instead of natural business keys",
+      "question": "A fitness-studio SaaS used member email addresses as the primary key of its members table, with bookings and payments referencing that email. A member changes their email address, and the update now has to cascade through every referencing table or break history. What was the original design mistake?",
+      "answer": "Using business data as the primary key. Emails change because business facts change; a system-generated member_id would have stayed stable forever, which is exactly why surrogate keys are preferred over natural keys."
+    },
+    {
+      "id": "data-modeling-20",
+      "type": "scenario",
+      "concept": "Foreign keys enforce referential integrity and prevent orphaned records",
+      "question": "A hobbyist forum lets users delete their accounts. Months later, thread pages start crashing: thousands of posts reference author IDs that no longer exist in the users table. What database-level protection was missing?",
+      "answer": "Foreign key constraints. A foreign key from posts.author_id to users would have refused the delete or forced explicit handling (cascade or reassignment), preventing orphaned posts that point at nonexistent users."
+    },
+    {
+      "id": "data-modeling-21",
+      "type": "scenario",
+      "concept": "Dropping FK enforcement at extreme scale in favor of application-level integrity",
+      "question": "An ad-tech company ingesting hundreds of thousands of impression rows per second finds that foreign key validation is a measurable share of write latency. What trade-off do some large-scale systems make in this situation, and what does it cost?",
+      "answer": "They drop database-level foreign key enforcement to reclaim write throughput and enforce referential integrity in application code instead. The cost is that correctness now depends on every write path getting it right — the database no longer guarantees it."
+    },
+    {
+      "id": "data-modeling-22",
+      "type": "scenario",
+      "concept": "One-to-many relationships put the foreign key on the many side",
+      "question": "Modeling a blogging platform where each post has exactly one author but a user writes many posts, a junior engineer adds a post_ids array column to the users table and appends to it on every publish. Lookups and integrity checks quickly get awkward. What is the standard relational way to model this relationship?",
+      "answer": "Put a user_id foreign key column on the posts table — in a one-to-many relationship the foreign key lives on the 'many' side. An ID array on the 'one' side can't be enforced by the database, complicates queries, and turns every publish into a read-modify-write on the user row."
+    },
+    {
+      "id": "data-modeling-23",
+      "type": "scenario",
+      "concept": "Many-to-many relationships require a junction table",
+      "question": "A music app is modeling playlists: a song can appear in many playlists, and a playlist holds many songs. A junior engineer adds a playlist_id column to the songs table, and immediately a song can only belong to one playlist. What is the correct relational structure?",
+      "answer": "A junction table — playlist_songs with foreign keys to both playlists and songs. Many-to-many relationships can't be expressed with a column on either side; they need the linking table."
+    },
+    {
+      "id": "data-modeling-24",
+      "type": "scenario",
+      "concept": "One-to-one relationships are rare and usually signal tables should merge",
+      "question": "During a schema review at a CRM startup, someone notices a users table and a user_preferences table with a strict one-row-to-one-row relationship, always inserted, fetched, and deleted together. What does this pattern usually indicate?",
+      "answer": "That the split is unnecessary — a strict 1:1 relationship usually means the two tables should be merged into one. Genuine reasons to keep 1:1 splits (like isolating huge rarely-read columns) are the exception, and none apply here."
+    },
+    {
+      "id": "data-modeling-25",
+      "type": "scenario",
+      "concept": "Database-level constraints protect data quality at the cost of write overhead",
+      "question": "A survey platform has three services writing to the same accounts table, each with its own validation code. The table now contains null emails and duplicate usernames because one service's checks lagged behind the others. What layer should own these rules, and what's the trade?",
+      "answer": "The database, via NOT NULL, UNIQUE, and CHECK constraints. Enforcing correctness at the database level makes it impossible for any writer to sneak bad data in, at the cost of a little extra validation work per write — a trade worth taking here."
+    },
+    {
+      "id": "data-modeling-26",
+      "type": "scenario",
+      "concept": "Choose indexes to directly serve the most important queries/API endpoints",
+      "question": "A job board's GET /companies/{id}/jobs endpoint has gotten slow as the jobs table grew to 50 million rows; the query plan shows a full table scan filtering on company_id. What is the first schema-level fix, and what general principle does it illustrate?",
+      "answer": "Add an index on jobs.company_id. The principle: indexes should map directly to your most important queries — read each endpoint's query and make sure an index serves it, rather than indexing speculatively."
+    },
+    {
+      "id": "data-modeling-27",
+      "type": "scenario",
+      "concept": "Composite indexes for combined filter-plus-sort access patterns",
+      "question": "A photo-sharing app's profile page runs 'the 20 most recent photos by this user.' The photos table already has one index on user_id and another on created_at, yet the query still sorts millions of rows and is slow. What index actually serves this query?",
+      "answer": "A composite index on (user_id, created_at). It lets the database jump to the user's rows already ordered by time, satisfying the filter and the sort together — two separate single-column indexes can't do both at once."
+    },
+    {
+      "id": "data-modeling-28",
+      "type": "scenario",
+      "concept": "Normalization stores each fact once and prevents update anomalies",
+      "question": "A CRM stores the customer's company name on every one of that company's contact rows. After a client rebrands, a batch update misses some rows, and sales reps now see two different company names depending on which contact they open. What schema principle was violated?",
+      "answer": "Normalization — each fact should be stored exactly once. Because the company name was duplicated across rows, an update could reach some copies and miss others; a companies table referenced by foreign key makes that anomaly impossible."
+    },
+    {
+      "id": "data-modeling-29",
+      "type": "scenario",
+      "concept": "Deliberate denormalization requires every write path to maintain the duplicated copies",
+      "question": "To make feed loads fast, a social app copied a like_count column onto the posts table instead of counting the likes table per request. Months later, the counts have drifted noticeably from the real like rows. What is the nature of this bug, and what discipline does the design demand?",
+      "answer": "This is the consistency cost of denormalization: the count is a duplicated derived fact, so every path that adds or removes a like must also update it — atomically or with periodic reconciliation. Miss one write path and the copies drift; that maintenance burden is the price paid for the fast read."
+    },
+    {
+      "id": "data-modeling-30",
+      "type": "scenario",
+      "concept": "Start normalized; denormalize only when a demonstrated read pattern requires it",
+      "question": "A hotel-booking startup with zero users yet is designing its first schema, and an engineer proposes duplicating hotel data into bookings, reviews, and search tables up front 'so we're ready for scale.' What is wrong with this plan?",
+      "answer": "It's premature denormalization. The rule is to start with a clean normalized model and denormalize only when a real, measured read pattern demands it — otherwise you take on permanent update-consistency burdens to solve a performance problem that doesn't exist."
+    },
+    {
+      "id": "data-modeling-31",
+      "type": "scenario",
+      "concept": "Point-in-time snapshots (orders, audit logs) are legitimate denormalization",
+      "question": "A new engineer at an e-commerce company files a bug: the orders table copies product name and price at purchase time instead of joining to the products table, which they flag as a normalization violation. Why is the existing design actually correct?",
+      "answer": "Order rows are point-in-time snapshots: the customer bought that product at that price, and the record must not change when the catalog is renamed or repriced later. Snapshot-style data — orders, event logs, audit trails — is a legitimate exception where duplication is the requirement, not a flaw."
+    },
+    {
+      "id": "data-modeling-32",
+      "type": "scenario",
+      "concept": "Analytics and read-optimized systems are legitimate denormalization exceptions",
+      "question": "A BI team maintains a reporting warehouse of pre-aggregated daily revenue tables — each row duplicates region names, product categories, and computed totals from the transactional system, all rebuilt by a nightly job. A backend engineer flags the duplication as bad schema design. Why doesn't the 'start normalized' rule condemn this system?",
+      "answer": "Analytics and reporting workloads are a recognized denormalization exception: the aggregated data changes infrequently, is rebuilt wholesale by a controlled pipeline, and read speed matters far more than update consistency. The anomaly risks that make duplication dangerous in a transactional schema barely apply here."
+    },
+    {
+      "id": "data-modeling-33",
+      "type": "scenario",
+      "concept": "Serve denormalized views from a cache instead of denormalizing the schema",
+      "question": "A SaaS dashboard's landing page needs a 'project summary' assembled from an expensive multi-table join, and the team is debating adding duplicated summary columns to the projects table to speed it up. What alternative keeps the schema clean, and why is it preferable?",
+      "answer": "Compute the summary and serve it from a cache like Redis, keeping the normalized tables as the source of truth. The cache delivers the denormalized read performance, while an invalidated or expired cache entry is far easier to correct than duplicated columns that have drifted."
+    },
+    {
+      "id": "data-modeling-34",
+      "type": "scenario",
+      "concept": "Choose the shard key from the primary access pattern to co-locate related data",
+      "question": "A chat platform has outgrown one database and must shard its messages table. The overwhelmingly dominant query is 'load all messages in a conversation.' One engineer proposes sharding by a hash of message_id for perfectly even distribution. What's wrong with that, and what key fits?",
+      "answer": "Hashing message_id scatters each conversation across every shard, so the dominant query becomes a cross-shard scatter-gather. Shard by conversation_id instead: the shard key should follow the primary access pattern so related data lives together on one shard."
+    },
+    {
+      "id": "data-modeling-35",
+      "type": "scenario",
+      "concept": "Time-range sharding creates a hot shard in write-heavy systems",
+      "question": "A logistics-telemetry system sharded its GPS-ping data by month, reasoning that dashboards mostly query recent data. In production, the current month's shard is at 100% write capacity while eleven older shards sit idle. What went wrong?",
+      "answer": "Time-range sharding routes every current write to the newest partition, creating a hot shard — a classic anti-pattern for write-heavy workloads. It only suits archival or analytics data where writes aren't concentrated in the present."
+    },
+    {
+      "id": "data-modeling-36",
+      "type": "scenario",
+      "concept": "Frequent cross-shard queries are the symptom of a shard key mismatched to the read pattern",
+      "question": "A social feed service sharded posts by the author's user_id. Building a user's home timeline now means querying the shards of all 500 accounts they follow and merging the results, and latency is terrible. What does this fan-out reveal about the design?",
+      "answer": "The shard key doesn't match this read pattern — routine cross-shard scatter-gather is the telltale symptom. The fix is designing so the hot query resolves within a shard, for example by precomputing each user's feed, rather than accepting cross-shard queries as normal."
+    },
+    {
+      "id": "data-modeling-37",
+      "type": "true_false",
+      "concept": "Shard keys are effectively permanent decisions",
+      "question": "Changing a shard key after launch is a routine migration, so it's reasonable to pick one quickly and revisit the choice once real traffic patterns emerge.",
+      "answer": "False — resharding means redistributing essentially all your data and revisiting every query that depended on the old key, so a shard key is effectively permanent. That's exactly why it must be chosen against your primary access patterns up front."
+    },
+    {
+      "id": "data-modeling-38",
+      "type": "mcq2",
+      "concept": "Interview execution order for presenting the data model",
+      "question": "During the high-level design portion of a system design interview, you're introducing the database. Which sequence is the stronger way to present it?",
+      "options": [
+        "Pick the database type (usually SQL), lay out each entity's columns to satisfy the functional requirements, mark primary and foreign keys, call out indexes for the key queries, and bring up denormalization or sharding only if the requirements demand them.",
+        "Lead with the sharding key and the denormalizations you'll need at scale, then work backward to define the tables and columns that fit that partitioning scheme."
+      ],
+      "answer": "Pick the database type (usually SQL), lay out each entity's columns to satisfy the functional requirements, mark primary and foreign keys, call out indexes for the key queries, and bring up denormalization or sharding only if the requirements demand them. — Requirements drive the model; scaling machinery like sharding and denormalization is layered on only when justified, not assumed from the start."
+    }
+  ]
+}

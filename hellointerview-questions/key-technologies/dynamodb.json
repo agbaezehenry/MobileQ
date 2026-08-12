@@ -1,0 +1,306 @@
+{
+  "section": "key-technologies",
+  "subsection": "DynamoDB",
+  "source_url": "https://www.hellointerview.com/learn/system-design/deep-dives/dynamodb",
+  "concepts": [
+    "Schema-less model pushes validation to the application layer",
+    "400KB maximum item size",
+    "Partition key choice and hot partitions",
+    "Sort key enables range queries within a partition",
+    "Sortable unique IDs beat raw timestamps as sort keys",
+    "B-tree ordering within a partition vs hashing across partitions",
+    "GSI adds an alternate partition-key access pattern",
+    "GSIs are asynchronously updated and only eventually consistent",
+    "GSIs have separate provisioned throughput; LSIs share the base table's capacity",
+    "LSI must be defined at table creation and caps 10GB per partition key",
+    "Choose LSI over GSI when the index needs strong consistency",
+    "Query reads only matching items; Scan reads everything",
+    "ProjectionExpression does not reduce RCU charges",
+    "Normalize bulky attributes into separate items to keep hot reads small",
+    "PartiQL is a convenience layer, not relational capability",
+    "Consistency is chosen per request, not per table",
+    "Strong reads cost double RCU and route to the leader",
+    "Read billing rounds item size up to 4KB blocks",
+    "Why eventually consistent reads return stale data (replica lag)",
+    "ACID transactions across tables up to 100 items",
+    "Write path: WAL replicated to a 2-of-3 quorum across AZs via Multi-Paxos",
+    "Automatic partition splitting on size or throughput",
+    "Global Tables for multi-region local latency",
+    "Encryption at rest and TLS are on by default",
+    "On-demand vs provisioned capacity billing",
+    "Minimum 1 WCU per write regardless of size",
+    "Per-partition throughput caps (3,000 RCU / 1,000 WCU)",
+    "Extreme write volume makes DynamoDB's pricing prohibitive",
+    "DAX: read/write-through cache adopted via client swap, for microsecond reads",
+    "DAX staleness when writes bypass the cache",
+    "DAX passes strongly consistent reads through uncached",
+    "Streams as CDC to sync a search index",
+    "Firehose cannot read DynamoDB Streams directly",
+    "Many GSIs/LSIs signal the data model is really relational",
+    "Vendor lock-in as a selection criterion",
+    "Justify DynamoDB with specific features, not 'NoSQL scales better'"
+  ],
+  "question_count": 36,
+  "questions": [
+    {
+      "id": "dynamodb-01",
+      "type": "scenario",
+      "concept": "Schema-less model pushes validation to the application layer",
+      "question": "An HR SaaS stores employee profiles in a DynamoDB table. Three different microservices write to it, and after a few months the team finds items with misspelled attribute names like 'salray', missing fields, and inconsistent date formats — yet DynamoDB accepted every write without complaint. Why did the database allow this, and where does the fix belong?",
+      "answer": "DynamoDB is schema-less: beyond the primary key it enforces no attribute structure, so any well-formed item is accepted. Uniformity must be enforced by application-level validation (or a shared write layer), not by the database."
+    },
+    {
+      "id": "dynamodb-02",
+      "type": "scenario",
+      "concept": "400KB maximum item size",
+      "question": "A news app stores each article as one DynamoDB item, embedding the article body plus its entire comment thread as a nested attribute. Popular articles with thousands of comments suddenly start failing on writes with validation errors. What is going wrong?",
+      "answer": "The items are blowing past DynamoDB's 400KB per-item limit, which counts all attributes. Comments must be split into their own items (e.g., article_id as partition key, comment id as sort key) instead of being embedded."
+    },
+    {
+      "id": "dynamodb-03",
+      "type": "scenario",
+      "concept": "Partition key choice and hot partitions",
+      "question": "A ticketing platform keys its orders table on the event date (partition key = 'sale_date'). On the day a superstar tour goes on sale, writes throttle badly even though the table has enormous provisioned capacity. What is the design flaw?",
+      "answer": "Every order that day hashes to the same partition key, so all traffic lands on one partition — a hot partition — while the rest of the table's capacity sits idle. The partition key must spread load evenly, e.g., key on event_id or order_id rather than the date."
+    },
+    {
+      "id": "dynamodb-04",
+      "type": "scenario",
+      "concept": "Sort key enables range queries within a partition",
+      "question": "A fitness app needs one query pattern above all: 'fetch user X's workouts between March 1 and March 31, newest first.' The current table uses a random workout_id as the only primary key, forcing expensive full-table operations. How should the table's primary key be designed?",
+      "answer": "Use a composite primary key: user_id as the partition key and the workout timestamp/date as the sort key. All of a user's workouts then live together ordered by date, so the date-range request becomes a single efficient Query with a sort-key range condition."
+    },
+    {
+      "id": "dynamodb-05",
+      "type": "scenario",
+      "concept": "Sortable unique IDs beat raw timestamps as sort keys",
+      "question": "A team-chat product uses (channel_id, millisecond_timestamp) as its composite key for messages. Occasionally when two members post at nearly the same instant, one message silently disappears. What is happening and what should the sort key be instead?",
+      "answer": "Two messages with the same partition key and identical timestamp share a primary key, so the second write overwrites the first. Use a sortable unique ID — UUIDv7, ULID, or a Snowflake ID — which preserves time ordering while guaranteeing uniqueness."
+    },
+    {
+      "id": "dynamodb-06",
+      "type": "mcq2",
+      "concept": "B-tree ordering within a partition vs hashing across partitions",
+      "question": "DynamoDB hashes the partition key to pick which partition an item lives on. Inside a single partition, how are the items sharing that partition key organized so sort-key range queries stay fast?",
+      "options": [
+        "In a B-tree ordered by sort key",
+        "In a hash index keyed on the sort key"
+      ],
+      "answer": "In a B-tree ordered by sort key — hashing the sort key would scatter adjacent values and make range scans impossible; hashing is used only across partitions for placement."
+    },
+    {
+      "id": "dynamodb-07",
+      "type": "scenario",
+      "concept": "GSI adds an alternate partition-key access pattern",
+      "question": "An e-commerce marketplace's orders table uses buyer_id as partition key and order_date as sort key. The seller-tools team now needs 'all orders for a given seller_id' and is currently running full-table Scans with filters. What should they add, and why does it solve the problem?",
+      "answer": "Add a Global Secondary Index with seller_id as its partition key (order_date as sort key). A GSI is essentially a separately partitioned copy of the data keyed differently, turning the seller lookup into a cheap Query instead of a Scan."
+    },
+    {
+      "id": "dynamodb-08",
+      "type": "scenario",
+      "concept": "GSIs are asynchronously updated and only eventually consistent",
+      "question": "A payments app writes a completed payment to its base table, then immediately queries a GSI (keyed by merchant_id) to render the merchant's confirmation screen. A small percentage of the time the fresh payment is missing from the result. What is going wrong?",
+      "answer": "GSIs are replicated asynchronously from the base table and support only eventually consistent reads — strong consistency on a GSI is impossible. The read-after-write confirmation must query the base table (optionally with a strong read) instead of the GSI."
+    },
+    {
+      "id": "dynamodb-09",
+      "type": "scenario",
+      "concept": "GSIs have separate provisioned throughput; LSIs share the base table's capacity",
+      "question": "A social-bookmarking service runs a provisioned-capacity table with a GSI keyed by tag. During a traffic surge the team cranks up the base table's write capacity, yet base-table writes keep throttling, and the metrics point at the index rather than the table. Why can a GSI choke writes to the base table, and would an LSI behave the same way?",
+      "answer": "A GSI has its own separately provisioned RCU/WCU, and every base-table write must also propagate to the index — if the GSI's write capacity is exhausted, base-table writes get throttled no matter how much the table itself has. An LSI would not: it has no separate budget and shares the base table's capacity."
+    },
+    {
+      "id": "dynamodb-10",
+      "type": "scenario",
+      "concept": "LSI must be defined at table creation and caps 10GB per partition key",
+      "question": "A project-management SaaS has a year-old production table keyed on (project_id, task_id) and wants to add a Local Secondary Index sorting tasks by due_date. Some large enterprise projects hold tens of gigabytes of tasks. Why is this plan doubly broken?",
+      "answer": "LSIs can only be created when the table is created — they cannot be added later — and each partition key value in an LSI-bearing table is capped at 10GB, which the big projects would exceed. They should add a GSI (addable anytime, no 10GB cap) or migrate to a new table."
+    },
+    {
+      "id": "dynamodb-11",
+      "type": "scenario",
+      "concept": "Choose LSI over GSI when the index needs strong consistency",
+      "question": "A ride-hailing app stores trips keyed by (driver_id, trip_id) and needs an alternate view of a driver's trips sorted by fare amount. Regulations require that this view be strongly consistent — a just-completed trip must appear immediately. Should the team use a GSI or an LSI, and why?",
+      "answer": "An LSI: it keeps the same partition key (driver_id) with a different sort key (fare) and is updated synchronously with the base table, so it supports strongly consistent reads. A GSI cannot — it is eventually consistent only."
+    },
+    {
+      "id": "dynamodb-12",
+      "type": "scenario",
+      "concept": "Query reads only matching items; Scan reads everything",
+      "question": "A food-delivery startup's 'my orders' page is implemented with a Scan carrying a FilterExpression on customer_id. As the table grows to millions of orders, the page takes many seconds and the read bill soars, even though each customer has only a handful of orders. What should the team change?",
+      "answer": "Replace the Scan with a Query on the customer_id key. Scan reads every item in the table (and bills for all of it) before filtering, while Query reads only the items matching the key condition."
+    },
+    {
+      "id": "dynamodb-13",
+      "type": "scenario",
+      "concept": "ProjectionExpression does not reduce RCU charges",
+      "question": "An ed-tech platform stores 300KB course items and fetches only the title and instructor fields using a ProjectionExpression, expecting the read cost to drop to a fraction of an RCU per fetch. The bill doesn't move at all. Why?",
+      "answer": "ProjectionExpression only trims what is sent over the network — DynamoDB still reads the full item from storage and charges RCUs based on the entire item's size. To actually cut cost, the large attributes must live in separate items."
+    },
+    {
+      "id": "dynamodb-14",
+      "type": "scenario",
+      "concept": "Normalize bulky attributes into separate items to keep hot reads small",
+      "question": "A local-business review app must choose between (a) one item per business embedding all its reviews, or (b) a businesses table plus a separate reviews table keyed by business_id. The dominant traffic is map views that need only each business's name and address. Which schema fits better, and why?",
+      "answer": "Option (b). Since read cost scales with total item size, embedding reviews makes every name-and-address lookup pay to read a huge item; splitting reviews out keeps the hot business items tiny and cheap, and reviews are fetched only when actually needed."
+    },
+    {
+      "id": "dynamodb-15",
+      "type": "true_false",
+      "concept": "PartiQL is a convenience layer, not relational capability",
+      "question": "Because DynamoDB supports PartiQL, teams can use it to run relational-style joins and ad-hoc aggregations just like a SQL database.",
+      "answer": "False — PartiQL is only SQL-flavored syntax translated into the same underlying key-based operations; it adds no new query capability, and a PartiQL statement without a key condition still executes as a full scan."
+    },
+    {
+      "id": "dynamodb-16",
+      "type": "scenario",
+      "concept": "Consistency is chosen per request, not per table",
+      "question": "A hotel-booking team believes they must configure their DynamoDB table as either 'strongly consistent' or 'eventually consistent' globally. Their booking-confirmation flow needs read-after-write guarantees, but their high-traffic browse pages need the cheapest, fastest reads. What are they misunderstanding?",
+      "answer": "Consistency in DynamoDB is a per-request choice, not a table setting: pass ConsistentRead=true on the booking-path reads and leave browse reads on the default eventual consistency. One table serves both needs."
+    },
+    {
+      "id": "dynamodb-17",
+      "type": "scenario",
+      "concept": "Strong reads cost double RCU and route to the leader",
+      "question": "After a minor bug, a logistics company's engineers set ConsistentRead=true on every read in their package-tracking service 'just to be safe.' Their read bill doubles and p99 read latency worsens. Why did both happen?",
+      "answer": "Strongly consistent reads cost 1 RCU per 4KB versus 0.5 RCU eventually consistent — exactly double — and every one must be served by the partition's leader replica rather than any of the three, adding latency and concentrating load. Strong reads belong only on paths that truly need read-after-write."
+    },
+    {
+      "id": "dynamodb-18",
+      "type": "scenario",
+      "concept": "Read billing rounds item size up to 4KB blocks",
+      "question": "A catalog service stores 9KB product items and budgets its strongly consistent fetches at 1 RCU each, reasoning 'one read, one unit.' Measured consumption comes in at three times the estimate. What billing detail did the engineer miss?",
+      "answer": "RCUs are billed per 4KB of item size, rounded up — not per request. A strongly consistent read of a 9KB item consumes ceil(9/4) = 3 RCU (1.5 RCU if eventually consistent), so large items multiply read cost even when fetched one at a time."
+    },
+    {
+      "id": "dynamodb-19",
+      "type": "scenario",
+      "concept": "Why eventually consistent reads return stale data (replica lag)",
+      "question": "On a social network, a user edits their bio, the write returns success, and an immediate page refresh briefly shows the old bio before correcting itself seconds later. Nothing is cached in the app tier. What is the mechanical explanation?",
+      "answer": "The default eventually consistent read can be served by any of the partition's three replicas; the write was acknowledged after a quorum, so one follower may not have applied it yet, and the refresh happened to hit that lagging follower. A strongly consistent read (leader-only) would have returned the new bio."
+    },
+    {
+      "id": "dynamodb-20",
+      "type": "scenario",
+      "concept": "ACID transactions across tables up to 100 items",
+      "question": "A fintech wallet must atomically debit one user's balance item and credit another's — possibly in different tables — with no state where only one side applied. An engineer objects that they chose a NoSQL store and atomic multi-item operations are off the table. Is the objection valid?",
+      "answer": "No. DynamoDB's TransactWriteItems provides ACID transactions with serializable isolation spanning up to 100 items across multiple tables — the debit and credit either both commit or both fail."
+    },
+    {
+      "id": "dynamodb-21",
+      "type": "scenario",
+      "concept": "Write path: WAL replicated to a 2-of-3 quorum across AZs via Multi-Paxos",
+      "question": "During an AWS availability-zone outage, a SaaS invoicing product's DynamoDB writes keep succeeding with zero intervention from the team. Walk through the replication mechanics that make this possible.",
+      "answer": "Each partition is a three-replica group (one leader, two followers) spread across three AZs and coordinated with Multi-Paxos. The leader writes a WAL entry and acknowledges the write once a 2-of-3 quorum has persisted it — so losing one AZ's replica still leaves a quorum, and writes proceed."
+    },
+    {
+      "id": "dynamodb-22",
+      "type": "scenario",
+      "concept": "Automatic partition splitting on size or throughput",
+      "question": "A smart-home IoT platform's device-events table grows 10x in a year and traffic quadruples, yet nobody on the team has ever resharded, rebalanced, or touched partitioning. Why has nothing fallen over?",
+      "answer": "DynamoDB splits and redistributes partitions automatically when one approaches its size or throughput limits, coordinated by its partition metadata service. Sharding is fully managed — there is no manual resharding operation to perform."
+    },
+    {
+      "id": "dynamodb-23",
+      "type": "scenario",
+      "concept": "Global Tables for multi-region local latency",
+      "question": "A multiplayer gaming company runs its player-inventory table in us-east-1. Players in Singapore and Frankfurt complain about sluggish inventory operations — every read and write crosses the ocean. What DynamoDB feature addresses this, and what does it do?",
+      "answer": "Global Tables: they replicate the table across chosen AWS regions in near real time, so each region's players read and write a local replica at local latency instead of a single distant region."
+    },
+    {
+      "id": "dynamodb-24",
+      "type": "scenario",
+      "concept": "Encryption at rest and TLS are on by default",
+      "question": "A healthcare SaaS is going through a compliance audit requiring encryption of data at rest and in transit. An engineer budgets a two-week sprint to 'add encryption to our DynamoDB tables.' What should the tech lead tell them?",
+      "answer": "There is nothing to build: DynamoDB encrypts all data at rest by default and every API call already goes over TLS. The remaining work is access control — scoping IAM policies and, if needed, VPC endpoints — not encryption."
+    },
+    {
+      "id": "dynamodb-25",
+      "type": "scenario",
+      "concept": "On-demand vs provisioned capacity billing",
+      "question": "A B2B analytics SaaS has flat, highly predictable DynamoDB traffic around the clock, yet its bill is painfully high. The table was set up on on-demand billing 'to keep things simple.' What should the team change, and what is the trade-off?",
+      "answer": "Switch to provisioned capacity: for steady, predictable workloads, paying for reserved RCUs/WCUs per hour is far cheaper than on-demand's per-request premium. The trade-off is that provisioned capacity can throttle or sit wasted if traffic deviates from the forecast — which their flat load makes unlikely."
+    },
+    {
+      "id": "dynamodb-26",
+      "type": "scenario",
+      "concept": "Minimum 1 WCU per write regardless of size",
+      "question": "An agricultural IoT fleet writes 100-byte sensor readings individually to DynamoDB. The engineer estimated write costs by dividing total bytes written by 1KB per WCU, but the actual bill comes in roughly ten times higher. Where did the estimate go wrong?",
+      "answer": "Every write consumes at least 1 WCU — write size is rounded up to the nearest 1KB — so each 100-byte write costs a full WCU, not a tenth. Batching around ten readings into one ~1KB item would bring cost in line with the estimate."
+    },
+    {
+      "id": "dynamodb-27",
+      "type": "scenario",
+      "concept": "Per-partition throughput caps (3,000 RCU / 1,000 WCU)",
+      "question": "A live TV voting app increments a single 'global_tally' item for each vote. The table is provisioned for 50,000 WCU, yet during the finale, writes throttle at roughly 1,000 per second. Why doesn't the huge table-level capacity help?",
+      "answer": "Table capacity is spread across partitions, but a single partition (and thus a single key) is hard-capped at 1,000 WCU (and 3,000 RCU). One item can never absorb more than that; the counter must be sharded across many keys (e.g., global_tally#1..N) and summed on read."
+    },
+    {
+      "id": "dynamodb-28",
+      "type": "scenario",
+      "concept": "Extreme write volume makes DynamoDB's pricing prohibitive",
+      "question": "A video platform proposes writing every single view event — peaking at around ten million writes per second — straight into DynamoDB, arguing 'it scales infinitely, so why not.' Technically it can scale to this. What is the counterargument the team is missing?",
+      "answer": "Cost. At 1,000 WCU per partition, ten million writes per second needs roughly 10,000 partitions and works out to about $156,000 per day even on provisioned capacity — per-write pricing makes DynamoDB a poor fit for firehose-style write volumes. Aggregate/batch events before persisting, or land raw events in a cheaper store."
+    },
+    {
+      "id": "dynamodb-29",
+      "type": "scenario",
+      "concept": "DAX: read/write-through cache adopted via client swap, for microsecond reads",
+      "question": "A sneaker-drop retailer's product-detail items get read millions of times per second during releases, and single-digit-millisecond DynamoDB reads are still too slow and expensive. They want caching without hand-rolling Redis invalidation logic. What does DynamoDB offer, and what does adoption actually require?",
+      "answer": "DAX, DynamoDB's managed in-memory read-through/write-through cache, serves repeated reads in microseconds and keeps itself populated. It is not transparent, though: the application must swap the standard DynamoDB client for the API-compatible DAX client SDK."
+    },
+    {
+      "id": "dynamodb-30",
+      "type": "scenario",
+      "concept": "DAX staleness when writes bypass the cache",
+      "question": "A grocery chain adopted DAX for its price-lookup service. A nightly repricing job writes directly to DynamoDB using the regular SDK, and every morning stores report stale prices for a while. What is the root cause?",
+      "answer": "DAX only invalidates its cache for writes that flow through DAX itself; the batch job's direct-to-DynamoDB writes bypass it, leaving cached entries stale until they expire. Route the job's writes through the DAX client (or accept/tune the cache TTL)."
+    },
+    {
+      "id": "dynamodb-31",
+      "type": "scenario",
+      "concept": "DAX passes strongly consistent reads through uncached",
+      "question": "A betting platform puts DAX in front of its odds table expecting a near-100% cache hit rate. But for regulatory reasons every read sets ConsistentRead=true, and after launch the cache hit rate is essentially zero — every read still lands on DynamoDB at full latency and cost. Why is DAX doing nothing for them?",
+      "answer": "DAX never caches strongly consistent reads: a ConsistentRead=true request is passed straight through to DynamoDB and its result is not stored in the cache. DAX only accelerates eventually consistent read traffic, so this workload gains nothing from it."
+    },
+    {
+      "id": "dynamodb-32",
+      "type": "scenario",
+      "concept": "Streams as CDC to sync a search index",
+      "question": "A job-listings site keeps postings in DynamoDB and wants full-text search in Elasticsearch. The first proposal is to have the API write to both stores on every change, but the team worries about the two drifting apart when one write fails. What is the cleaner DynamoDB-native pattern?",
+      "answer": "Enable DynamoDB Streams on the table and have a consumer (typically a Lambda) apply each insert/update/delete to Elasticsearch. The stream is change-data-capture from the source of truth, so the index converges without fragile dual-write logic."
+    },
+    {
+      "id": "dynamodb-33",
+      "type": "scenario",
+      "concept": "Firehose cannot read DynamoDB Streams directly",
+      "question": "An ad-tech data team designs a pipeline: DynamoDB Streams feeding Kinesis Data Firehose directly, which then loads events into S3 and Redshift for analytics. The design review rejects it. What is wrong with the plan?",
+      "answer": "Firehose cannot consume DynamoDB Streams directly. They need an intermediary — enable Kinesis Data Streams on the table (or put a Lambda between the DynamoDB stream and Firehose) — and then Firehose can deliver to S3/Redshift."
+    },
+    {
+      "id": "dynamodb-34",
+      "type": "scenario",
+      "concept": "Many GSIs/LSIs signal the data model is really relational",
+      "question": "A CRM-style SaaS on DynamoDB is up to a dozen GSIs, and each new feature request — 'filter accounts by owner and region', 'join contacts to open deals' — spawns another index and application-side join code. What is this pattern telling the team?",
+      "answer": "Constantly piling on secondary indexes to emulate joins and ad-hoc filters is the classic sign the access patterns are relational, not key-value. A relational database like PostgreSQL would serve these query patterns natively and is likely the better fit."
+    },
+    {
+      "id": "dynamodb-35",
+      "type": "scenario",
+      "concept": "Vendor lock-in as a selection criterion",
+      "question": "An insurance enterprise with a strict multi-cloud, no-proprietary-dependencies mandate is evaluating DynamoDB for a new claims system that otherwise fits its access patterns perfectly. What consideration should drive the decision here?",
+      "answer": "Vendor lock-in: DynamoDB is AWS-proprietary with no portable equivalent, so it violates the neutrality mandate no matter how well it fits technically. An open-source alternative (e.g., Cassandra for key-value scale, or PostgreSQL) is the appropriate choice under that constraint."
+    },
+    {
+      "id": "dynamodb-36",
+      "type": "mcq2",
+      "concept": "Justify DynamoDB with specific features, not 'NoSQL scales better'",
+      "question": "In a system design interview, which justification for choosing DynamoDB signals the stronger candidate?",
+      "options": [
+        "\"I'm picking NoSQL because SQL databases can't handle this scale.\"",
+        "\"My access pattern is simple key-based lookups at high write volume, and I want managed multi-AZ durability plus built-in CDC via Streams.\""
+      ],
+      "answer": "\"My access pattern is simple key-based lookups at high write volume, and I want managed multi-AZ durability plus built-in CDC via Streams.\" — blanket 'NoSQL for scale' claims read as inexperience, since well-designed relational databases scale extremely well; strong candidates tie the choice to specific features solving their specific problem."
+    }
+  ]
+}

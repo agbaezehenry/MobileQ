@@ -1,0 +1,230 @@
+{
+  "section": "patterns",
+  "subsection": "Patterns Overview",
+  "source_url": "https://www.hellointerview.com/learn/system-design/in-a-hurry/patterns",
+  "concepts": [
+    "Pattern recognition saves interview time and signals maturity",
+    "Knowing a pattern means knowing its failure modes in advance",
+    "DB-backed CRUD service is the default baseline architecture",
+    "Stateless app servers enable safe horizontal scaling",
+    "First fix for CRUD read hotspots is a cache, not a rearchitecture",
+    "Add a dedicated search index when queries outgrow primary-DB lookups",
+    "Sync a secondary index from committed data, not dual writes",
+    "Queue plus worker pool decouples acceptance from execution",
+    "Async jobs need a job ID and queryable status",
+    "Autoscale workers on queue backlog, not CPU",
+    "At-least-once delivery requires idempotent workers",
+    "Dead-letter queues quarantine poison messages",
+    "Don't push short fast operations behind a queue",
+    "Two-stage architecture: cheap candidate generation, expensive reranking",
+    "Stage-two budget caps candidate count; quality comes from stage-one recall",
+    "Items filtered out in stage one are unrecoverable downstream",
+    "Event sourcing: append-only event log as source of truth",
+    "Replaying the event log builds new projections retroactively",
+    "Event replay cost grows with history; snapshots fix rehydration",
+    "Event-driven decoupling: add consumers without touching producers",
+    "Durable checkpointing lets long jobs resume instead of restart",
+    "Geospatial indexes partition space to prune irrelevant regions",
+    "Prefer geospatial support already in your stack over new infrastructure",
+    "Below ~thousands of items, a full scan beats a geospatial index",
+    "Proximity queries are inherently local, matching region partitioning",
+    "Real designs compose multiple known patterns",
+    "Escalate complexity only when requirements demand it"
+  ],
+  "question_count": 27,
+  "questions": [
+    {
+      "id": "patterns-overview-01",
+      "type": "scenario",
+      "concept": "Pattern recognition saves interview time and signals maturity",
+      "question": "In a mock system design interview for a link-shortening service, a candidate spends 25 of the 35 minutes deriving from first principles that they need an API server, a load balancer, and a database, then runs out of time before touching the actually hard parts like custom aliases and extreme read skew. Their design was correct the whole way. What should the candidate do differently next time?",
+      "answer": "Recognize the problem instantly as a standard DB-backed CRUD pattern, sketch that baseline in a couple of minutes, and spend the recovered time on the novel, difficult requirements. Pattern recognition is the point: interviewers read fast identification of known structures as seniority, and time spent re-deriving them as a junior signal."
+    },
+    {
+      "id": "patterns-overview-02",
+      "type": "scenario",
+      "concept": "Knowing a pattern means knowing its failure modes in advance",
+      "question": "Two candidates in separate interviews propose the identical queue-plus-worker design for a receipt-scanning pipeline. When the interviewer asks 'what breaks here?', the first immediately lists duplicate processing from redelivery, poison messages crashing workers, and backlog growth during spikes — with a mitigation for each — while the second stares at their own diagram and starts guessing. Both drew the same boxes, so what does the first candidate have that the second doesn't?",
+      "answer": "Real command of the pattern, which comes bundled with its characteristic failure modes and standard mitigations: duplicates imply idempotency, poison messages imply a dead-letter queue, backlog implies queue-depth autoscaling. Recognizing a pattern is valuable precisely because it lets you predict how the system fails before it does, and interviewers probe for exactly that."
+    },
+    {
+      "id": "patterns-overview-03",
+      "type": "scenario",
+      "concept": "DB-backed CRUD service is the default baseline architecture",
+      "question": "Two engineers are starting a recipe-sharing app: users create, edit, browse, and delete recipes. One proposes launching with a dozen microservices, Kafka between them, and separate read/write stores 'so we never have to rewrite it.' The other proposes a single service in front of one relational database. Which approach fits, and what does the simple version actually look like?",
+      "answer": "The single service wins: this is a textbook DB-backed CRUD workload. The baseline is clients hitting a load balancer, a horizontally scalable tier of stateless app servers, and one primary database — that shape carries most products much further than people expect, and the microservice version buys nothing here but operational pain."
+    },
+    {
+      "id": "patterns-overview-04",
+      "type": "scenario",
+      "concept": "Stateless app servers enable safe horizontal scaling",
+      "question": "A SaaS analytics dashboard keeps each logged-in user's session object in the app server's memory. The team scales from one server to four behind a load balancer, and users immediately start getting randomly logged out or seeing half-loaded dashboards as they click around. What is going wrong?",
+      "answer": "The app servers are stateful, so a request routed to a different instance than the one holding the session finds nothing. Move session and request state into a shared store (the database or Redis) so every server can handle any request — statelessness is the property that makes the load-balanced tier scalable at all."
+    },
+    {
+      "id": "patterns-overview-05",
+      "type": "scenario",
+      "concept": "First fix for CRUD read hotspots is a cache, not a rearchitecture",
+      "question": "An e-commerce site's product database is pegged at high CPU, and profiling shows the same few hundred trending product pages are being fetched thousands of times per second, almost never changing between fetches. An engineer opens a design doc proposing to shard the database across eight nodes. What is the better first move, and why?",
+      "answer": "Put a cache in front of the database for these hot, rarely-changing reads — it removes most of the load with a one-component change. Sharding is a heavyweight, mostly irreversible escalation; the CRUD baseline is supposed to be extended incrementally, and repeated identical reads are exactly what caches exist for."
+    },
+    {
+      "id": "patterns-overview-06",
+      "type": "scenario",
+      "concept": "Add a dedicated search index when queries outgrow primary-DB lookups",
+      "question": "A secondhand-goods marketplace stores listings in Postgres. Users now want to type 'blue mid centry sofa' and get relevant results despite typos and word order. The team has been layering on LIKE '%...%' queries and trigram hacks, and search latency keeps climbing as listings grow. What architectural change should they make?",
+      "answer": "Stand up a dedicated search index (an inverted-index system like Elasticsearch) alongside Postgres and route search traffic to it. Full-text, fuzzy, relevance-ranked queries are a different access pattern than the primary database is built for — the standard CRUD extension is a purpose-built index next to the source-of-truth DB, not ever-cleverer SQL."
+    },
+    {
+      "id": "patterns-overview-07",
+      "type": "scenario",
+      "concept": "Sync a secondary index from committed data, not dual writes",
+      "question": "A ticketing site writes each new event to Postgres and then, in the same request handler, makes a second call to index it in Elasticsearch. Occasionally the Elasticsearch call fails after the Postgres commit succeeds, and those events are simply unfindable in search until someone notices. What should the team change?",
+      "answer": "Stop dual-writing from application code and derive the index from the database instead — change data capture or a queue fed from committed writes, with the indexer able to retry and catch up. Two independent writes with no transaction spanning them will always drift; making the index a downstream consumer of the source of truth makes convergence automatic."
+    },
+    {
+      "id": "patterns-overview-08",
+      "type": "scenario",
+      "concept": "Queue plus worker pool decouples acceptance from execution",
+      "question": "A photo-book service generates print-ready PDFs, which takes about two minutes per book. Orders are processed inside the web request, so the load balancer kills the connection at its 30-second timeout and customers see errors even though rendering eventually finishes. What is the right structural fix?",
+      "answer": "Split acceptance from execution: the web server validates the order, drops a job onto a queue, and responds immediately; a separate pool of workers pulls jobs and renders the PDFs. Work that takes minutes has no business living inside a synchronous request — the queue-plus-worker-pool shape is the standard pattern for it."
+    },
+    {
+      "id": "patterns-overview-09",
+      "type": "scenario",
+      "concept": "Async jobs need a job ID and queryable status",
+      "question": "A podcast-hosting platform moved episode transcription into a background worker pool, and the endpoint now returns 202 with an empty body. Support tickets pour in: creators upload an episode, see nothing, and re-upload the same file three or four times 'because it didn't work.' The workers are actually processing everything fine. What is missing?",
+      "answer": "Job status tracking. Submission should return a job ID backed by a status record the client can poll (or be notified about), so users see queued/processing/done instead of silence. Going async without observable status trades a timeout problem for a trust problem."
+    },
+    {
+      "id": "patterns-overview-10",
+      "type": "scenario",
+      "concept": "Autoscale workers on queue backlog, not CPU",
+      "question": "An IoT company batches device telemetry into processing jobs. Each job spends most of its time waiting on network calls to a third-party enrichment API. During evening peaks the queue backlog grows for hours, yet the worker autoscaler never adds instances because it triggers on CPU utilization, which sits at 15%. What should the team change?",
+      "answer": "Scale the worker pool on queue depth or backlog age instead of CPU. For I/O-bound jobs, host metrics say nothing about demand — the queue itself is the demand signal, and a growing backlog is the direct evidence that the pool is undersized."
+    },
+    {
+      "id": "patterns-overview-11",
+      "type": "scenario",
+      "concept": "At-least-once delivery requires idempotent workers",
+      "question": "A fintech app emails monthly statements via a queue and worker pool. A few customers each month receive the same statement email two or three times. Logs show a worker crashed (or was rebalanced) after sending the email but before acknowledging the message, and the queue handed the message to another worker. Why is this happening, and what is the fix?",
+      "answer": "The queue is doing its job: at-least-once delivery redelivers anything unacknowledged, so duplicates are guaranteed eventually. The fix is idempotent processing — record a per-statement send under a dedupe key and have workers check it before sending, so redelivery becomes a no-op rather than a second email."
+    },
+    {
+      "id": "patterns-overview-12",
+      "type": "scenario",
+      "concept": "Dead-letter queues quarantine poison messages",
+      "question": "A gaming studio's replay-processing pipeline ground to a halt overnight. One corrupted replay file crashes any worker that touches it; the queue then requeues it, the next worker picks it up and crashes too, and the cluster spends the night in a crash-requeue loop while valid replays pile up behind it. What mechanism is missing?",
+      "answer": "A dead-letter queue. After N failed attempts, the message should be shunted to a quarantine queue for later inspection instead of being redelivered forever. Without a DLQ, a single poison message can consume the whole pool and starve every healthy job."
+    },
+    {
+      "id": "patterns-overview-13",
+      "type": "scenario",
+      "concept": "Don't push short fast operations behind a queue",
+      "question": "During a redesign 'for scale,' a team routes their signup form's username-availability check — a 40ms indexed database lookup — through a message queue and worker pool. Users now watch a spinner for a second or more, responses occasionally arrive after the user has already typed a different name, and load spikes now silently pile up in the queue instead of failing fast. Was the change right?",
+      "answer": "No — this is the classic over-application of the async pattern. A 40ms check belongs in the synchronous request path, where the user gets an instant answer, the code stays simple, and overload produces natural back-pressure instead of an invisible backlog. Queues earn their complexity for long-running work, not fast lookups."
+    },
+    {
+      "id": "patterns-overview-14",
+      "type": "scenario",
+      "concept": "Two-stage architecture: cheap candidate generation, expensive reranking",
+      "question": "A streaming service wants each homepage row personalized with a heavy ML model that scores how likely the viewer is to watch a title. Running the model against all 20 million titles per page load is orders of magnitude over the latency budget, but the product team refuses to give up model quality. What architecture solves this?",
+      "answer": "A two-stage design: a fast, cheap first stage (simple heuristics, an ANN/vector lookup, or lightweight filters) narrows 20 million titles to a few hundred candidates, and the expensive model reranks only those. Precision where it counts, applied to a set small enough to afford — that split is the whole pattern."
+    },
+    {
+      "id": "patterns-overview-15",
+      "type": "scenario",
+      "concept": "Stage-two budget caps candidate count; quality comes from stage-one recall",
+      "question": "A job-search site runs keyword retrieval followed by an ML reranker. To 'improve result quality,' an engineer bumps the candidate set passed to the reranker from 500 to 50,000 postings. Ranking latency explodes and quality barely moves. What did the engineer misunderstand about the pattern?",
+      "answer": "The division of labor. The reranker's per-item cost is exactly why the candidate set must stay small — its latency budget caps how many items stage two can score, so the candidate count is a fixed budget, not a quality dial. If quality is lacking, the fix lives in the first stage, not in shoveling a corpus-sized input into the expensive stage."
+    },
+    {
+      "id": "patterns-overview-16",
+      "type": "scenario",
+      "concept": "Items filtered out in stage one are unrecoverable downstream",
+      "question": "An e-commerce search team has spent two quarters upgrading their reranking model, yet shoppers searching 'couch' still never see products listed as 'sofa.' Offline evaluation says the reranker orders its inputs nearly perfectly. Why isn't the reranker fixing this, and where is the real problem?",
+      "answer": "The reranker can only reorder what retrieval hands it — the 'sofa' products are being dropped by the keyword-matching first stage, so no amount of reranking skill can surface them. The fix is stage-one recall: add synonym expansion or embedding-based retrieval so relevant items make it into the candidate set at all."
+    },
+    {
+      "id": "patterns-overview-17",
+      "type": "scenario",
+      "concept": "Event sourcing: append-only event log as source of truth",
+      "question": "A digital wallet stores only each user's current balance, overwriting it on every transaction. A customer disputes their balance, and support has no way to show how the number came to be — the history simply doesn't exist. Regulators are now asking for exactly that history. What storage model should the team move to?",
+      "answer": "Event sourcing: persist an append-only log of immutable events (credits, debits, reversals) as the source of truth, and compute the balance by folding over the log. The current-state-only model destroys history by design; the event log makes every balance explainable and auditable."
+    },
+    {
+      "id": "patterns-overview-18",
+      "type": "scenario",
+      "concept": "Replaying the event log builds new projections retroactively",
+      "question": "A competitive gaming platform has recorded every match event (kills, objectives, surrenders) in an append-only log since launch. Product now wants a brand-new 'clutch rating' leaderboard — a statistic nobody thought to compute or store — and wants it populated for all three years of past matches, not just future ones. Can they do it, and how?",
+      "answer": "Yes, and it's a headline benefit of event sourcing: write the new projection logic and replay the historical event log through it to backfill three years of clutch ratings. Because events, not derived tables, are the source of truth, new read models can be built retroactively at any time."
+    },
+    {
+      "id": "patterns-overview-19",
+      "type": "scenario",
+      "concept": "Event replay cost grows with history; snapshots fix rehydration",
+      "question": "An event-sourced shopping-cart service rebuilds each cart's state by replaying its full event stream on load. For long-lived accounts with hundreds of thousands of events, opening the cart now takes multiple seconds, and the replay time only grows. What is the standard mitigation?",
+      "answer": "Snapshots: periodically persist the computed state, then rehydrate by loading the latest snapshot and replaying only the events after it. Replay cost scaling with total history is the known tax of event sourcing, and snapshotting is the standard way to pay it down."
+    },
+    {
+      "id": "patterns-overview-20",
+      "type": "scenario",
+      "concept": "Event-driven decoupling: add consumers without touching producers",
+      "question": "In a ride-hailing backend, the trip service's 'trip completed' handler has grown to call the receipt emailer, the driver-rating prompt, the loyalty-points service, and the analytics pipeline in sequence. Every new post-trip feature means editing and redeploying the trip service, and a failure in any callee delays trip completion itself. How should this be restructured?",
+      "answer": "Have the trip service publish a trip-completed event to a bus and make each feature an independent consumer. Producers stop knowing who cares: new features subscribe without any change to the trip service, and one consumer's failure no longer drags down trip completion — that decoupling is the core payoff of event-driven architecture."
+    },
+    {
+      "id": "patterns-overview-21",
+      "type": "scenario",
+      "concept": "Durable checkpointing lets long jobs resume instead of restart",
+      "question": "A price-intelligence company crawls retail sites in jobs that each run six to eight hours on cheap preemptible VMs. Whenever a VM is reclaimed mid-crawl, the job is requeued and the replacement worker starts the entire crawl from page one, so some jobs effectively never finish. What is the right fix?",
+      "answer": "Make the job durable by checkpointing progress externally — persist the URL frontier and completed set in a shared store as the crawl proceeds, so a replacement worker resumes from the checkpoint rather than from zero. Any job whose runtime rivals the machine's failure interval must record progress outside the worker, or it will restart forever."
+    },
+    {
+      "id": "patterns-overview-22",
+      "type": "scenario",
+      "concept": "Geospatial indexes partition space to prune irrelevant regions",
+      "question": "A food-delivery app matches orders to nearby couriers by computing the distance from the restaurant to every one of its 2 million active couriers on each request — a full-table scan with a distance formula in the WHERE clause. Matching latency is now measured in seconds. What should replace this query?",
+      "answer": "A geospatial index (geohash, quadtree, or a PostGIS-style spatial index) that divides the map into regions, so the query examines only couriers in cells near the restaurant and prunes the rest of the planet outright. Distance-filtered full scans can't use a normal index; spatial partitioning is precisely the structure this lookup needs."
+    },
+    {
+      "id": "patterns-overview-23",
+      "type": "mcq2",
+      "concept": "Prefer geospatial support already in your stack over new infrastructure",
+      "question": "A retail chain's store-locator must answer 'stores within 5 miles of the user' across roughly 300,000 locations. The entire backend already runs on Postgres. Which approach fits better?",
+      "options": [
+        "Enable PostGIS on the existing Postgres database and add a spatial index",
+        "Stand up a dedicated Elasticsearch cluster to handle the geo queries"
+      ],
+      "answer": "Enable PostGIS on the existing Postgres database and add a spatial index — mainstream databases already ship capable geospatial support, and extending the system you operate beats adopting a whole new cluster for one query shape at this scale."
+    },
+    {
+      "id": "patterns-overview-24",
+      "type": "scenario",
+      "concept": "Below ~thousands of items, a full scan beats a geospatial index",
+      "question": "A boutique gym chain with 800 locations builds a 'find my nearest gym' feature. An engineer designs a dedicated microservice with Redis geospatial sets and a quadtree fallback, arguing nearest-neighbor search demands purpose-built indexing. Is the design justified?",
+      "answer": "No — at 800 rows, computing the distance to every gym per query is microseconds of work, faster and vastly simpler than operating a purpose-built index. Geospatial indexes earn their overhead in the hundreds of thousands to millions of items; below that, just scan."
+    },
+    {
+      "id": "patterns-overview-25",
+      "type": "true_false",
+      "concept": "Proximity queries are inherently local, matching region partitioning",
+      "question": "True or false: a proximity-search service must be optimized for queries that span the whole globe at once, since a user could ask for results anywhere.",
+      "answer": "False — users overwhelmingly search near their own location, so queries touch a small neighborhood of the map. That locality is exactly why dividing space into regions works: each query hits a handful of nearby cells, and globe-spanning queries are a non-goal."
+    },
+    {
+      "id": "patterns-overview-26",
+      "type": "scenario",
+      "concept": "Real designs compose multiple known patterns",
+      "question": "A podcast platform is designing its creator pipeline: creators upload multi-gigabyte audio files, the platform transcodes them for minutes, creators watch a live progress bar, and on completion a publish sequence runs — transcript generation, subscriber notifications, feed updates — that must survive partial failures. The tech lead wants to design this as one bespoke system from scratch. What is the better way to frame the design?",
+      "answer": "Decompose it into the standard patterns it's made of: direct-to-storage upload for the large files, a queue-and-worker stage for transcoding, a realtime-update channel for the progress bar, and a multi-step workflow for the publish sequence. Real systems are compositions of known patterns wired together — recognizing that turns a daunting bespoke design into assembling solved pieces."
+    },
+    {
+      "id": "patterns-overview-27",
+      "type": "scenario",
+      "concept": "Escalate complexity only when requirements demand it",
+      "question": "Asked to design a personal to-do list app in an interview, a candidate opens with sharded Cassandra, a Kafka event bus, and separate read and write services, explaining they want to 'show depth from the start.' The stated requirements are a few thousand users and basic list operations. How will a strong interviewer read this, and what should the candidate have done?",
+      "answer": "As a red flag, not depth — complexity that the requirements don't justify signals the candidate can't calibrate. The right move is to start with the simple pattern the problem calls for, then escalate deliberately if and when the interviewer pushes scale, narrating what would trigger each addition."
+    }
+  ]
+}
