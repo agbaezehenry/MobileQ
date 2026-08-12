@@ -187,28 +187,52 @@
   DECK.forEach(function (u) { CARDS = CARDS.concat(u.cards); });
 
   /* ---- topics -------------------------------------------------------------
-     A card's topic reads "family · group"; the family is what you pick by, so
-     the chip row is derived from the deck rather than configured anywhere. A
-     unit takes its family from its first card, which is also the entry's own
-     topic unless a scenario step overrode it. */
+     A card's topic reads "family · group": "core-concepts · caching". Both
+     halves are pickable — the broad one because "quiz me on core concepts" is
+     a real request, the narrow one because "quiz me on caching" is a more
+     common one. Neither is configured anywhere; both are read off the deck, so
+     adding cards adds chips.
+
+     A unit takes its topic from its first card, which is also the entry's own
+     unless a scenario step overrode it. Not every card has a group — plenty of
+     the metrics deck is a bare "business" — and those simply have no sub-chip
+     to be found under. */
   function familyOf(topic) {
     return String(topic || '').split('·')[0].trim() || 'other';
   }
+  function subOf(topic) {
+    return String(topic || '').split('·')[1] ? String(topic).split('·')[1].trim() : '';
+  }
 
-  var FAMILIES = [];                         // [{ name, count }], deck order
+  var FAMILIES = [];                 // [{ name, count, subs: [{ name, count }] }]
   (function () {
     var byName = {};
     DECK.forEach(function (u) {
-      var f = familyOf(u.cards[0].topic);
-      if (!byName[f]) { byName[f] = { name: f, count: 0 }; FAMILIES.push(byName[f]); }
-      byName[f].count += u.cards.length;
+      var top = u.cards[0].topic;
+      var f = familyOf(top), s = subOf(top), n = u.cards.length;
+
+      if (!byName[f]) {
+        byName[f] = { name: f, count: 0, subs: [], _sub: {} };
+        FAMILIES.push(byName[f]);
+      }
+      byName[f].count += n;
+      if (!s) return;
+      if (!byName[f]._sub[s]) {
+        byName[f]._sub[s] = { name: s, count: 0 };
+        byName[f].subs.push(byName[f]._sub[s]);
+      }
+      byName[f]._sub[s].count += n;
     });
   })();
 
-  var picked = null;   // null means every family; otherwise a list of names
+  var picked    = null;   // null means every family; otherwise a list of names
+  var pickedSub = null;   // null means every group inside those families
 
   function unitPicked(u) {
-    return !picked || picked.indexOf(familyOf(u.cards[0].topic)) >= 0;
+    var top = u.cards[0].topic;
+    if (picked && picked.indexOf(familyOf(top)) < 0) return false;
+    if (pickedSub && pickedSub.indexOf(subOf(top)) < 0) return false;
+    return true;
   }
   function pickedDeck()  { return DECK.filter(unitPicked); }
   function pickedCards() {
@@ -2117,48 +2141,119 @@
   }
 
   /* ---- topic picker -------------------------------------------------------
-     Tapping a family while everything is selected narrows to just that family,
-     because "quiz me on Redis" is the thing people come here to do. Tapping
-     more adds them, and turning the last one off falls back to All rather than
-     leaving a deck with nothing in it. */
-  function setPicked(next) {
+     Two rows. The top one is families; tapping one while everything is selected
+     narrows to just that family, because "quiz me on Redis" is the thing people
+     come here to do. Tapping more adds them, and turning the last one off falls
+     back to All rather than leaving a deck with nothing in it.
+
+     The second row is the groups inside whatever families are picked, and it is
+     only there once a family is: thirty-odd sub-chips under All would be a wall
+     of text where a shortlist belongs. Narrowing the families prunes any sub
+     that is no longer on offer, so the two rows can never disagree. */
+
+  /* Every group on offer under the current family selection, merged by name —
+     one "caching" chip, however many of the picked families have one. Biggest
+     first: some families are grouped finely enough that half their chips would
+     be single cards, and those belong at the end of a long row rather than in
+     front of the ones worth a sitting. */
+  function subsOnOffer() {
+    var out = [], byName = {};
+    FAMILIES.forEach(function (f) {
+      if (picked && picked.indexOf(f.name) < 0) return;
+      f.subs.forEach(function (s) {
+        if (!byName[s.name]) { byName[s.name] = { name: s.name, count: 0 }; out.push(byName[s.name]); }
+        byName[s.name].count += s.count;
+      });
+    });
+    return out.sort(function (a, b) { return b.count - a.count; });
+  }
+
+  /* The group filter may only be as narrow as the second row is honest about.
+     Anything that row is not currently offering is dropped — including all of
+     it when there is no row at all, because a hidden filter quietly shrinking
+     the deck under an "All" chip is a bug, not a feature. */
+  function pruneSubs(wanted) {
+    if (!picked || !wanted || !wanted.length) return null;
+    var offer = subsOnOffer().map(function (s) { return s.name; });
+    var kept = wanted.filter(function (s) { return offer.indexOf(s) >= 0; });
+    return kept.length ? kept : null;
+  }
+
+  function persistTopics() {
+    try {
+      if (picked || pickedSub) {
+        localStorage.setItem(TOPICS_LS, JSON.stringify({ f: picked, s: pickedSub }));
+      } else {
+        localStorage.removeItem(TOPICS_LS);
+      }
+    } catch (e) { /* won't persist */ }
+  }
+
+  function setPicked(next, nextSub) {
     if (next && !next.length) next = null;
     picked = next;
-    try {
-      if (picked) localStorage.setItem(TOPICS_LS, JSON.stringify(picked));
-      else localStorage.removeItem(TOPICS_LS);
-    } catch (e) { /* won't persist */ }
+    pickedSub = pruneSubs(nextSub);
+    persistTopics();
     renderTopics();
     startStats();
   }
 
   function toggleFamily(name) {
-    if (!picked) { setPicked([name]); return; }   // from everything to just this
+    if (!picked) { setPicked([name], pickedSub); return; }   // everything → just this
     var next = picked.slice();
     var at = next.indexOf(name);
     if (at >= 0) next.splice(at, 1); else next.push(name);
-    setPicked(next);
+    setPicked(next, pickedSub);
+  }
+
+  function toggleSub(name) {
+    var next = (pickedSub || []).slice();
+    var at = next.indexOf(name);
+    if (at >= 0) next.splice(at, 1); else next.push(name);
+    setPicked(picked, next);
+  }
+
+  function chip(label, count, on, fn) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'topic' + (on ? ' is-on' : '');
+    b.setAttribute('aria-pressed', String(!!on));
+    b.innerHTML = '<b>' + esc(label) + '</b><i>' + count + '</i>';
+    b.addEventListener('click', fn);
+    return b;
   }
 
   function renderTopics() {
     var row = $('topics');
     row.innerHTML = '';
-
-    var chip = function (label, count, on, fn) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'topic' + (on ? ' is-on' : '');
-      b.setAttribute('aria-pressed', String(!!on));
-      b.innerHTML = '<b>' + esc(label) + '</b><i>' + count + '</i>';
-      b.addEventListener('click', fn);
-      return b;
-    };
-
-    row.appendChild(chip('All', CARDS.length, !picked, function () { setPicked(null); }));
+    row.appendChild(chip('All', CARDS.length, !picked, function () { setPicked(null, null); }));
     FAMILIES.forEach(function (f) {
       row.appendChild(chip(f.name, f.count, !!picked && picked.indexOf(f.name) >= 0,
         function () { toggleFamily(f.name); }));
     });
+
+    var subRow = $('subtopics');
+    subRow.innerHTML = '';
+    var offer = picked ? subsOnOffer() : [];
+    subRow.classList.toggle('is-hidden', !offer.length);
+    if (!offer.length) return;
+
+    subRow.appendChild(chip('Whole topic', familyCards(), !pickedSub,
+      function () { setPicked(picked, null); }));
+    offer.forEach(function (s) {
+      subRow.appendChild(chip(s.name, s.count, !!pickedSub && pickedSub.indexOf(s.name) >= 0,
+        function () { toggleSub(s.name); }));
+    });
+  }
+
+  /* Cards in the picked families, ignoring any group narrowing — what the
+     "Whole topic" chip goes back to. */
+  function familyCards() {
+    var n = 0;
+    FAMILIES.forEach(function (f) {
+      if (!picked || picked.indexOf(f.name) >= 0) n += f.count;
+    });
+    return n;
   }
 
   /* ---- start screen counts ----------------------------------------------- */
@@ -2296,16 +2391,22 @@
   setMode(savedMode);
 
   // Restore the topic selection, dropping any family the deck no longer has —
-  // questions.js is meant to be edited, so a stored name can go stale.
+  /* The deck is meant to be edited, so a stored name can go stale and is only
+     honoured if it still names something. The key held a bare array of families
+     before there were sub-topics; a device that last ran that version still has
+     one, so it is read as families with no group narrowing rather than thrown
+     away. */
   try {
-    var savedTopics = JSON.parse(localStorage.getItem(TOPICS_LS) || 'null');
-    if (savedTopics && savedTopics.length) {
-      picked = savedTopics.filter(function (name) {
+    var saved = JSON.parse(localStorage.getItem(TOPICS_LS) || 'null');
+    if (Array.isArray(saved)) saved = { f: saved, s: null };
+    if (saved && saved.f && saved.f.length) {
+      picked = saved.f.filter(function (name) {
         return FAMILIES.some(function (f) { return f.name === name; });
       });
       if (!picked.length) picked = null;
     }
-  } catch (e) { picked = null; }
+    if (saved && saved.s) pickedSub = pruneSubs(saved.s);
+  } catch (e) { picked = null; pickedSub = null; }
 
   renderTopics();
   startStats();

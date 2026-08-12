@@ -52,11 +52,13 @@
       </ul>
 
       <!-- ---- topics -------------------------------------------------------
-           One chip per family, plus All. Tapping a family narrows the run to
-           it; tapping more adds them. Chips are built in app.js from whatever
-           topics questions.js actually contains. -->
+           Two rows. The first is one chip per family plus All; tapping a family
+           narrows the run to it, tapping more adds them. The second appears
+           once a family is picked and holds the sub-topics inside it. Both are
+           built in app.js from whatever topics the deck actually contains. -->
       <p class="pick-h">quiz by topic</p>
       <div class="topics" id="topics" role="group" aria-label="Topics"></div>
+      <div class="topics topics--sub is-hidden" id="subtopics" role="group" aria-label="Sub-topics"></div>
 
       <!-- ---- pace ---------------------------------------------------------
            Slow stops on every card. Fast only stops when you were wrong, and
@@ -285,9 +287,11 @@
     </div>
   </div>
 
-  <!-- questions.js first: app.js reads window.QUESTIONS at boot.
+  <!-- The deck first: app.js reads window.QUESTIONS at boot, and the second
+       file appends to what the first one set, so the order matters.
        fsrs.js next: app.js reads window.FSRS at boot too. -->
   <script src="./questions.js"></script>
+  <script src="./questions-hellointerview.js"></script>
   <script src="./fsrs.js"></script>
   <script src="./app.js"></script>
 </body>

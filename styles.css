@@ -245,7 +245,11 @@ body::before {
   text-transform: uppercase;
   color: var(--chalk-faint);
 }
-.topics { display: flex; flex-wrap: wrap; gap: 8px; }
+/* flex: none matters. The start screen is a scrolling flex column, and a chip
+   row that is allowed to shrink gets squeezed to a sliver by its own siblings
+   once the deck is big enough to need six rows of chips. Let the rows be as
+   tall as their content and let the screen scroll. */
+.topics { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
 .topic {
   appearance: none; font: inherit; cursor: pointer;
   display: inline-flex; align-items: baseline; gap: 7px;
@@ -275,6 +279,19 @@ body::before {
 }
 .topic.is-on b { color: var(--tint-b); }
 .topic.is-on i { color: var(--chalk-soft); }
+
+/* Sub-topics: the same chip a size down and indented under a rule, so the row
+   reads as being inside the family above it rather than beside it. It is not
+   given its own scroll — a scrolling box inside a scrolling screen traps the
+   gesture, and the screen it sits on already scrolls. */
+.topics--sub {
+  margin-top: -4px;
+  padding: 2px 0 2px 12px;
+  border-left: 1.5px solid var(--chalk-hair);
+}
+.topics--sub .topic { padding: 6px 11px; border-radius: 11px 9px 12px 10px; }
+.topics--sub .topic b { font-size: 0.9rem; }
+.topics--sub .topic i { font-size: 0.68rem; }
 
 /* ---- pace picker (start screen) -----------------------------------------
    Slow reads every verdict. Fast only stops you on a miss, which is the whole

@@ -18,6 +18,7 @@ const SHELL = [
   './app.js',
   './fsrs.js',
   './questions.js',
+  './questions-hellointerview.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

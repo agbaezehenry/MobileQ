@@ -14,8 +14,12 @@ only stops you when you get one wrong. The `←` at the top left reopens anythin
 already answered. The start screen has a [topic picker](#quiz-by-topic), so a run can be the
 whole deck or just one subject.
 
-The deck that ships with it is 211 cards over three subjects: **metrics and ML systems**,
-**Redis**, and **Elasticsearch**. The metrics half splits into four families:
+The deck that ships with it is **1322 cards** in two banks. The first is 211 cards on
+**metrics and ML systems**, **Redis** and **Elasticsearch**, described below. The second is
+1111 cards of [**system design**](#the-system-design-bank), generated from the Hello
+Interview question bank.
+
+The metrics half splits into four families:
 
 | Family | What it measures | Examples in the deck |
 | --- | --- | --- |
@@ -50,35 +54,90 @@ to say *why* you'd pick a Stream over a List, not recognising that you would.
 
 ---
 
+## The system-design bank
+
+1111 cards generated from the [Hello Interview system design
+guide](https://www.hellointerview.com/learn/system-design), in four broad topics that mirror
+its sections:
+
+| Topic | Cards | Sub-topics |
+| --- | --- | --- |
+| **core-concepts** (345) | networking essentials, data modeling, sharding, core concepts overview, db indexing, api design, cap theorem, caching, numbers to know, consistent hashing |
+| **key-technologies** (374) | key technologies overview, elasticsearch, redis, api gateway, kafka, cassandra, dynamodb, postgres, flink, zookeeper |
+| **patterns** (244) | realtime updates, long running tasks, large blobs, scaling reads, dealing with contention, scaling writes, multi step processes, patterns overview |
+| **advanced-topics** (148) | time series databases, vector databases, data structures for big data, proximity search |
+
+Nine in ten of them are [written cards](#written-cards): the source questions are already
+"here is a situation, what would you do and why", which is the shape a written card exists
+for. The rest are two-choice — the bank's own true/false and either/or questions, carried
+across as a swipe.
+
+These cards ship no `keyPoints` checklist, and do not need one: [the
+grader](#the-marking-call) reads the checklist out of the reference answer when a card has
+none.
+
+The file is generated, not hand-written:
+
+```
+node tools/build-hellointerview.js
+```
+
+It reads `hellointerview-questions/` and writes `questions-hellointerview.js`. Edit the
+source bank and re-run; hand edits to the generated file are lost. Card ids are prefixed
+`hi-` because ids key FSRS review state forever — they have to be unique against the metrics
+deck and stable across regenerations.
+
+---
+
 ## Quiz by topic
 
-The start screen has a chip per family with its card count, plus **All**. Tapping a family
+Two rows of chips on the start screen, so a run can be a whole subject or one corner of it.
+
+The **top row is one chip per family** with its card count, plus **All**. Tapping a family
 while everything is selected narrows the run to just it — "quiz me on Redis" being the thing
 you usually want — and tapping more adds them. Turning the last one off falls back to All
-rather than leaving you with an empty deck. The choice sticks between launches.
+rather than leaving you with an empty deck.
+
+The **second row is the sub-topics inside whatever families are picked**, and only appears
+once one is: thirty-odd chips under **All** would be a wall of text where a shortlist
+belongs. So `core-concepts` → `caching` is two taps and 32 cards. Biggest group first, since
+some families are grouped finely enough that half their chips are single cards. **Whole
+topic** clears the narrowing without dropping the family.
+
+The two rows can never disagree. Narrowing the families prunes any sub-topic they no longer
+offer, and dropping back to **All** drops the sub-topic filter with it — a hidden filter
+quietly shrinking the deck under an **All** chip would be a bug, not a feature.
 
 Everything downstream follows the selection: the card count under the buttons, **Review due
-· N**, and what `Start the deck`, `Shuffle first` and `Run it again` deal.
+· N**, and what `Start the deck`, `Shuffle first` and `Run it again` deal. The choice sticks
+between launches.
 
-The chips are built from whatever `questions.js` contains — the family is the part of `topic`
-before the `·`, so adding `kafka · consumer groups` cards puts a `kafka` chip on the start
-screen with no other change. A stored selection naming a family the deck no longer has is
-quietly dropped.
+Both rows are built from whatever the deck contains — `topic` reads `family · group`, so
+adding `kafka · consumer groups` cards puts a `kafka` chip on the start screen and a
+`consumer groups` chip underneath it, with no other change. A stored selection naming
+something the deck no longer has is quietly dropped, and a selection stored before sub-topics
+existed still loads.
 
 ---
 
 ## Files
 
 ```
-index.html      app shell + iOS meta tags
-styles.css      chalkboard styling
-app.js          swipe gesture, queue, scoring, summary, Ask chat, marking, voice
-fsrs.js         FSRS-5 scheduler + the per-card memory it runs on
-questions.js    the question bank — edit this, nothing else
-manifest.json   PWA manifest
-sw.js           service worker (offline cache)
-icons/          192, 512, and a maskable 512
+index.html                     app shell + iOS meta tags
+styles.css                     chalkboard styling
+app.js                         swipe gesture, queue, scoring, summary, Ask chat, marking, voice
+fsrs.js                        FSRS-5 scheduler + the per-card memory it runs on
+questions.js                   the hand-written bank — edit this
+questions-hellointerview.js    generated; edit the source below instead
+hellointerview-questions/      source for the above
+tools/build-hellointerview.js  regenerates it — not part of the app
+manifest.json                  PWA manifest
+sw.js                          service worker (offline cache)
+icons/                         192, 512, and a maskable 512
 ```
+
+The two deck files are loaded in order and the second appends to the first, so `app.js` sees
+one `window.QUESTIONS`.
 
 ---
 
